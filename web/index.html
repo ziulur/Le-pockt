@@ -3068,7 +3068,14 @@ class NDS {
     else this.cardKind = 0;
     if (this.cardLen === 0) { this.cardDone(); return; }
     this.romctrl |= 0x80800000;
-    this.dmaTrig(0, 5); this.dmaTrig(1, 5);
+    this.cardDma();
+  }
+  // DMA do cartucho: transfere enquanto houver dado pronto (alguns jogos pedem 1 palavra por vez, em modo contínuo)
+  cardDma() {
+    for (let c = 0; c < 2; c++) for (let i = 0; i < 4; i++) {
+      const k = ((0xB0 + i * 12) >> 2) + 2; let guard = 0x10000;
+      while ((this.romctrl & 0x00800000) && (this.io[c][k] >>> 31) && this.dma[c][i].timing === 5 && guard-- > 0) this.runDma(c, i);
+    }
   }
   cardDone() { this.romctrl &= 0x7F7FFFFF; if (this.auxspicnt & 0x4000) this.raise(this.cardC, 1 << 19); }
   cardRead() {
@@ -3204,7 +3211,7 @@ class NDS {
     if ((ctrl >>> 31) && !(old >>> 31)) {
       d.src = io[k] & 0x0FFFFFFE; d.dst = io[k + 1] & 0x0FFFFFFE;
       d.timing = c === 0 ? (ctrl >>> 27) & 7 : [0, 1, 5, 6][(ctrl >>> 28) & 3];
-      if (d.timing === 0 || (d.timing === 5 && (this.romctrl & 0x00800000))) this.runDma(c, i);
+      if (d.timing === 0) this.runDma(c, i); else if (d.timing === 5) this.cardDma();
     }
   }
   dmaTrig(c, tm) { for (let i = 0; i < 4; i++) if ((this.io[c][((0xB0 + i * 12) >> 2) + 2] >>> 31) && this.dma[c][i].timing === tm) this.runDma(c, i); }
