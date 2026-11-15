@@ -2387,14 +2387,14 @@ class Arm {
     return false;
   }
   run() {
-    const r = this.r, bus = this.bus, v5 = this.v5, base = this.base;
+    const r = this.r, bus = this.bus, v5 = this.v5, base = this.base, m16 = bus.m16, m32 = bus.m32, a16 = bus.a16, a32 = bus.a32, aLo = bus.aLo, aHi = bus.aHi, aMask = bus.aMask;
     while (this.cycles < this.tgt) {
       if (this.irqLine && this.ime && this.cI === 0) this.enterIrq();
       if (this.halted) { this.cycles = this.tgt; return; }
       const pc = r[15];
-      if (this.cT) { const op = bus.r16((pc - 2) >>> 0); r[15] = pc + 2; this.cycles += base; this.thumb(op); }
+      if (this.cT) { const a = (pc - 2) >>> 0; const op = (a >>> 24) === 2 ? m16[(a & 0x3FFFFE) >> 1] : (a >= aLo && a < aHi) ? a16[(a & aMask) >> 1] : bus.r16(a); r[15] = pc + 2; this.cycles += base; this.thumb(op); }
       else {
-        const op = bus.r32((pc - 4) >>> 0); r[15] = pc + 4; this.cycles += base;
+        const a = (pc - 4) >>> 0; const op = (a >>> 24) === 2 ? m32[(a & 0x3FFFFC) >> 2] : (a >= aLo && a < aHi) ? a32[(a & aMask) >> 2] : bus.r32(a); r[15] = pc + 4; this.cycles += base;
         const cond = op >>> 28;
         if (cond === 14) this.arm(op);
         else if (cond !== 15) { if (this.testCond(cond)) this.arm(op); }
@@ -2459,7 +2459,7 @@ class Arm {
   }
   arm(op) {
     const r = this.r;
-    if (this.v5 && this.arm5(op)) return;
+    if (this.v5) { const t = op >>> 25 & 7; if ((t === 7 || (t === 0 && ((op & 0x01900000) === 0x01000000 || (op & 0x0E1000D0) === 0x000000D0))) && this.arm5(op)) return; }
     switch ((op >>> 25) & 7) {
       case 0: {
         if ((op & 0x0FFFFFF0) === 0x012FFF10) { // BX
@@ -2756,7 +2756,7 @@ class NDS {
     this.bios9.w.set([0xE92D500F, 0xEE190F11, 0xE1A00620, 0xE1A00600, 0xE2800901, 0xE28FE000, 0xE510F004, 0xE8BD500F, 0xE25EF004], 0x200 >> 2);
     this.bios7.w.set([0xE92D500F, 0xE3A00301, 0xE28FE000, 0xE510F004, 0xE8BD500F, 0xE25EF004], 0x200 >> 2);
     this.io = [new Uint32Array(0x800), new Uint32Array(0x800)]; this.io16 = new Uint16Array(this.io[0].buffer);
-    const bus = (c) => ({ r8: (a) => this.r8(c, a), r16: (a) => this.r16(c, a), r32: (a) => this.r32(c, a), w8: (a, v) => this.w8(c, a, v), w16: (a, v) => this.w16(c, a, v), w32: (a, v) => this.w32(c, a, v),
+    const bus = (c) => ({ m16: this.ram.h, m32: this.ram.w, a16: c ? this.wram7.h : this.itcm.h, a32: c ? this.wram7.w : this.itcm.w, aLo: c ? 0x03800000 : 0, aHi: c ? 0x04000000 : 0x02000000, aMask: c ? 0xFFFF : 0x7FFF, r8: (a) => this.r8(c, a), r16: (a) => this.r16(c, a), r32: (a) => this.r32(c, a), w8: (a, v) => this.w8(c, a, v), w16: (a, v) => this.w16(c, a, v), w32: (a, v) => this.w32(c, a, v),
       swi: (cpu, n) => this.swi(c, cpu, n), cp15r: (id) => this.cp15r(id), cp15w: (id, v) => this.cp15w(id, v) });
     this.cpu = [new NArm(bus(0), true, 0xFFFF0200 | 0, 2), new NArm(bus(1), false, 0x200, 1)];
     this.tBgA = new Int32Array(32); this.tBgB = new Int32Array(8); this.tObjA = new Int32Array(16); this.tObjB = new Int32Array(8); this.tLcdc = new Int32Array(64);
@@ -2911,12 +2911,21 @@ class NDS {
     }
     return false;
   }
-  r8(c, a) { if (this.map(c, a)) return this.mm.b[this.mo]; if ((a >>> 24) === 4) return (this.ioR(c, (a & ~3) >>> 0) >>> ((a & 3) << 3)) & 0xFF; return 0; }
-  r16(c, a) { if (this.map(c, a)) return this.mm.h[this.mo >> 1]; if ((a >>> 24) === 4) return (this.ioR(c, (a & ~3) >>> 0) >>> ((a & 2) << 3)) & 0xFFFF; return 0; }
-  r32(c, a) { if (this.map(c, a)) return this.mm.w[this.mo >> 2] | 0; if ((a >>> 24) === 4) return this.ioR(c, a) | 0; return 0; }
-  w8(c, a, v) { if (this.map(c, a)) { this.mm.b[this.mo] = v; return; } if ((a >>> 24) === 4) { const s = (a & 3) << 3; this.ioW(c, (a & ~3) >>> 0, v << s, (0xFF << s) >>> 0); } }
-  w16(c, a, v) { if (this.map(c, a)) { this.mm.h[this.mo >> 1] = v; return; } if ((a >>> 24) === 4) { const s = (a & 2) << 3; this.ioW(c, (a & ~3) >>> 0, v << s, (0xFFFF << s) >>> 0); } }
-  w32(c, a, v) { if (this.map(c, a)) { this.mm.w[this.mo >> 2] = v; return; } if ((a >>> 24) === 4) this.ioW(c, a, v, 0xFFFFFFFF); }
+  // caminho rápido: RAM principal (e DTCM/ITCM no ARM9); o resto passa por map()
+  fast(c, a) {
+    if (c === 0) {
+      const d = (a - this.dtcmBase) >>> 0;
+      if (d < 0x4000) { this.mm = this.dtcm; this.mo = d; return true; }
+    }
+    if ((a >>> 24) === 2) { this.mm = this.ram; this.mo = a & 0x3FFFFF; return true; }
+    return this.map(c, a);
+  }
+  r8(c, a) { if (this.fast(c, a)) return this.mm.b[this.mo]; if ((a >>> 24) === 4) return (this.ioR(c, (a & ~3) >>> 0) >>> ((a & 3) << 3)) & 0xFF; return 0; }
+  r16(c, a) { if (this.fast(c, a)) return this.mm.h[this.mo >> 1]; if ((a >>> 24) === 4) return (this.ioR(c, (a & ~3) >>> 0) >>> ((a & 2) << 3)) & 0xFFFF; return 0; }
+  r32(c, a) { if (this.fast(c, a)) return this.mm.w[this.mo >> 2] | 0; if ((a >>> 24) === 4) return this.ioR(c, a) | 0; return 0; }
+  w8(c, a, v) { if (this.fast(c, a)) { this.mm.b[this.mo] = v; return; } if ((a >>> 24) === 4) { const s = (a & 3) << 3; this.ioW(c, (a & ~3) >>> 0, v << s, (0xFF << s) >>> 0); } }
+  w16(c, a, v) { if (this.fast(c, a)) { this.mm.h[this.mo >> 1] = v; return; } if ((a >>> 24) === 4) { const s = (a & 2) << 3; this.ioW(c, (a & ~3) >>> 0, v << s, (0xFFFF << s) >>> 0); } }
+  w32(c, a, v) { if (this.fast(c, a)) { this.mm.w[this.mo >> 2] = v; return; } if ((a >>> 24) === 4) this.ioW(c, a, v, 0xFFFFFFFF); }
 
   cp15r(id) { switch (id) { case 0x000: return 0x41059461; case 0x001: return 0x0F0D2112; case 0x100: return this.cp15ctl; case 0x910: return this.dtcmReg; case 0x911: return this.itcmReg; } return 0; }
   cp15w(id, v) {
@@ -4045,7 +4054,7 @@ function loop(now) {
   acc += dt;
   let n = 0;
   if (turbo) { for (let i = gb.sys === 'nds' ? 2 : gb.sys === 'gba' ? 3 : 4; i > 0; i--) { gb.runFrame(); pumpAudio(); } acc = 0; n = 1; }
-  else while (acc >= FRAME_MS && n < 3) { gb.runFrame(); pumpAudio(); acc -= FRAME_MS; n++; }
+  else { const t0 = performance.now(); while (acc >= FRAME_MS && n < 3) { gb.runFrame(); pumpAudio(); acc -= FRAME_MS; n++; if (performance.now() - t0 > 11) { if (acc > FRAME_MS) acc = FRAME_MS * 0.5; break; } } }
   if (acc > FRAME_MS * 3) acc = 0;
   if (n) { img32.set(gb.out); ctx2d.putImageData(img, 0, 0); }
 }
