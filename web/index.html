@@ -2765,6 +2765,7 @@ class NDS {
     this.affX = [new Int32Array(2), new Int32Array(2)]; this.affY = [new Int32Array(2), new Int32Array(2)];
     this.bgLine = [0, 1, 2, 3].map(() => new Uint16Array(256));
     this.objLine = new Uint16Array(256); this.objPri = new Uint8Array(256); this.objSemi = new Uint8Array(256); this.objWin = new Uint8Array(256); this.winMask = new Uint8Array(256);
+    this.lineBuf = new Uint16Array(256); this.capOn = false;
     this.order = [0, 0, 0, 0]; this.bgPrio = [0, 0, 0, 0];
     this.fb = new Uint32Array(256 * 384); this.out = new Uint32Array(256 * 384);
     this.lut = new Uint32Array(0x8000);
@@ -3205,7 +3206,8 @@ class NDS {
         if (line === 192) { this.dispstat[c] |= 1; if (ds & 8) this.raise(c, 1); this.dmaTrig(c, 1); }
         else if (line === 262) this.dispstat[c] &= ~1;
       }
-      if (line === 192) { const t = this.out; this.out = this.fb; this.fb = t; this.gxVblank(); }
+      if (line === 192) { const t = this.out; this.out = this.fb; this.fb = t; this.gxVblank(); if (this.capOn) { this.capOn = false; this.io[0][0x64 >> 2] &= 0x7FFFFFFF; } }
+      else if (line === 0) this.capOn = (this.io[0][0x64 >> 2] >>> 31) !== 0;
       else if (line === 0) for (let e = 0; e < 2; e++) for (let i = 0; i < 2; i++) { const b = (e * 0x1000 + 0x28 + i * 0x10) >> 2; this.affX[e][i] = (this.io[0][b] << 4) >> 4; this.affY[e][i] = (this.io[0][b + 1] << 4) >> 4; }
       const t0 = this.lineStart;
       this.runTo(t0 + 1606);
@@ -3235,12 +3237,9 @@ class NDS {
   }
   drawEngine(e, y, base) {
     const io = this.io16, rb = e << 11, out = this.fb, lut = this.lut, dc = this.io[0][e << 10], dmode = (dc >>> 16) & 3;
-    if (dmode !== 1) {
-      if (dmode === 2 && e === 0) { const vh = this.vram.h, o = (((dc >>> 18) & 3) * 0x20000 + y * 512) >> 1; for (let x = 0; x < 256; x++) out[base + x] = lut[vh[o + x] & 0x7FFF]; }
-      else out.fill(dmode === 0 ? 0xFFFFFFFF : 0xFF000000, base, base + 256);
-      this.affStep(e); return;
-    }
-    if (dc & 0x80) { out.fill(0xFFFFFFFF, base, base + 256); this.affStep(e); return; }
+    const lb = this.lineBuf, cap = e === 0 && this.capOn, mb0 = io[rb + (0x6C >> 1)];
+    if (dmode !== 1 && !cap) { this.affStep(e); this.lineOut(e, y, base, dmode, dc, mb0); return; }
+    if (dc & 0x80) { lb.fill(0x7FFF); this.affStep(e); if (cap) this.capture(y); this.lineOut(e, y, base, dmode, dc, mb0); return; }
     const kinds = BG_KIND[dc & 7]; let en = (dc >>> 8) & 0xF;
     for (let b = 0; b < 4; b++) {
       if (!(en & (1 << b))) continue;
@@ -3270,7 +3269,6 @@ class NDS {
     if (eva > 16) eva = 16; if (evb > 16) evb = 16; if (evy > 16) evy = 16;
     const backdrop = this.pal.h[e << 9] & 0x7FFF, objLine = this.objLine, objPri = this.objPri, objSemi = this.objSemi, bgLine = this.bgLine;
     const needSecond = bldMode === 1 || (objOn && this.anySemi);
-    const mb = R(0x6C), mbMode = mb >> 14; let mbF = mb & 31; if (mbF > 16) mbF = 16;
     for (let x = 0; x < 256; x++) {
       const m = winOn ? mask[x] : 0x3F;
       let l1 = 5, c1 = backdrop, l2 = 5, c2 = backdrop, found = 0;
@@ -3293,9 +3291,26 @@ class NDS {
         if (bldMode === 1) { if (t2 & (1 << l2)) c1 = this.blend(c1, c2, eva, evb); }
         else c1 = this.fade(c1, bldMode === 2, evy);
       }
-      if (mbMode === 1 || mbMode === 2) c1 = this.fade(c1, mbMode === 1, mbF);
-      out[base + x] = lut[c1];
+      lb[x] = c1;
     }
+    if (cap) this.capture(y);
+    this.lineOut(e, y, base, dmode, dc, mb0);
+  }
+  lineOut(e, y, base, dmode, dc, mb) {
+    const out = this.fb, lut = this.lut, lb = this.lineBuf, mbMode = mb >> 14; let f = mb & 31; if (f > 16) f = 16;
+    if (dmode === 0) { out.fill(0xFFFFFFFF, base, base + 256); return; }
+    if (dmode === 3 || (dmode === 2 && e === 1)) { out.fill(0xFF000000, base, base + 256); return; }
+    if (dmode === 2) { const vh = this.vram.h, o = (((dc >>> 18) & 3) * 0x20000 + y * 512) >> 1; for (let x = 0; x < 256; x++) lb[x] = vh[o + x] & 0x7FFF; }
+    if (mbMode === 1 || mbMode === 2) for (let x = 0; x < 256; x++) out[base + x] = lut[this.fade(lb[x], mbMode === 1, f)];
+    else for (let x = 0; x < 256; x++) out[base + x] = lut[lb[x]];
+  }
+  capture(y) {
+    const cnt = this.io[0][0x64 >> 2], size = (cnt >>> 20) & 3, w = size === 0 ? 128 : 256, h = [128, 64, 128, 192][size];
+    if (y >= h) return;
+    const vh = this.vram.h, bank = (cnt >>> 16) & 3, wofs = ((cnt >>> 18) & 3) * 0x8000, lb = this.lineBuf;
+    const o = bank * 0x20000;
+    if (cnt & 0x01000000) { const g = this.g, row = y * 256; for (let x = 0; x < w; x++) vh[(o + ((wofs + (y * w + x) * 2) & 0x1FFFF)) >> 1] = g.alpha[row + x] ? g.color[row + x] | 0x8000 : 0; }
+    else for (let x = 0; x < w; x++) vh[(o + ((wofs + (y * w + x) * 2) & 0x1FFFF)) >> 1] = lb[x] | 0x8000;
   }
   blend(c1, c2, eva, evb) {
     let r = ((c1 & 31) * eva + (c2 & 31) * evb) >> 4, g = (((c1 >> 5) & 31) * eva + ((c2 >> 5) & 31) * evb) >> 4, b = (((c1 >> 10) & 31) * eva + ((c2 >> 10) & 31) * evb) >> 4;
