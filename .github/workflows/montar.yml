@@ -1,0 +1,60 @@
+name: Montar aplicativos
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+permissions:
+  contents: write
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - run: mkdir -p android/app/src/main/assets && cp web/index.html android/app/src/main/assets/index.html
+      - run: gradle -p android assembleDebug --no-daemon
+      - run: cp android/app/build/outputs/apk/debug/app-debug.apk LE-Pocket.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: LE-Pocket.apk
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: mkdir -p ios/www && cp web/index.html ios/www/index.html
+      - run: cd ios && xcodegen generate
+      - run: cd ios && xcodebuild -project LEPocket.xcodeproj -scheme LEPocket -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+      - run: |
+          mkdir Payload
+          cp -R ios/build/Build/Products/Release-iphoneos/LEPocket.app Payload/
+          zip -qr LE-Pocket.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: LE-Pocket.ipa
+  publicar:
+    needs: [android, ios]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: saida
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls saida || exit 1
+          cp web/index.html saida/LE-Pocket.html
+          gh release delete baixar --yes --cleanup-tag || true
+          sleep 3
+          gh release create baixar saida/* --target main --title "LE Pocket" --notes "Android: LE-Pocket.apk. iPhone (instalacao por fora da loja): LE-Pocket.ipa, sem assinatura. Os jogos nao vem incluidos."
