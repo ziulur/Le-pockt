@@ -3510,16 +3510,17 @@ function db() {
   if (dbp) return dbp;
   dbp = new Promise((res, rej) => {
     try {
-      const r = indexedDB.open('lepocket', 2);
-      r.onupgradeneeded = () => { const d = r.result; if (!d.objectStoreNames.contains('roms')) d.createObjectStore('roms', { keyPath: 'id' }); if (!d.objectStoreNames.contains('states')) d.createObjectStore('states'); };
+      const r = indexedDB.open('lepocket', 3);
+      r.onupgradeneeded = (e) => { const d = r.result; if (e.oldVersion < 3 && d.objectStoreNames.contains('roms')) d.deleteObjectStore('roms'); if (!d.objectStoreNames.contains('roms')) d.createObjectStore('roms', { keyPath: 'id' }); if (!d.objectStoreNames.contains('data')) d.createObjectStore('data'); if (!d.objectStoreNames.contains('states')) d.createObjectStore('states'); };
       r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
     } catch (e) { rej(e); }
   });
   return dbp;
 }
-async function libPut(rec) { try { const d = await db(); await new Promise((res, rej) => { const tx = d.transaction('roms', 'readwrite'); tx.objectStore('roms').put(rec); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); } catch (e) {} }
+async function libPut(rec, data) { try { const d = await db(); await new Promise((res, rej) => { const tx = d.transaction(['roms', 'data'], 'readwrite'); tx.objectStore('roms').put(rec); if (data) tx.objectStore('data').put(data, rec.id); tx.oncomplete = res; tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error); }); return true; } catch (e) { return false; } }
+async function libData(id) { try { const d = await db(); return await new Promise((res) => { const r = d.transaction('data').objectStore('data').get(id); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); }); } catch (e) { return null; } }
 async function libAll() { try { const d = await db(); return await new Promise((res, rej) => { const r = d.transaction('roms').objectStore('roms').getAll(); r.onsuccess = () => res(r.result || []); r.onerror = () => rej(r.error); }); } catch (e) { return []; } }
-async function libDel(id) { try { const d = await db(); await new Promise((res) => { const tx = d.transaction('roms', 'readwrite'); tx.objectStore('roms').delete(id); tx.oncomplete = res; tx.onerror = res; }); } catch (e) {} }
+async function libDel(id) { try { const d = await db(); await new Promise((res) => { const tx = d.transaction(['roms', 'data'], 'readwrite'); tx.objectStore('roms').delete(id); tx.objectStore('data').delete(id); tx.oncomplete = res; tx.onerror = res; }); } catch (e) {} }
 async function statePut(id, s) { const d = await db(); await new Promise((res, rej) => { const tx = d.transaction('states', 'readwrite'); tx.objectStore('states').put(s, id); tx.oncomplete = res; tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error); }); }
 async function stateGet(id) { try { const d = await db(); return await new Promise((res) => { const r = d.transaction('states').objectStore('states').get(id); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); }); } catch (e) { return null; } }
 async function renderLib() {
@@ -3530,7 +3531,7 @@ async function renderLib() {
     const row = document.createElement('div'); row.className = 'rom';
     row.innerHTML = `<span class="tag">${(r.sys || (r.cgb ? 'gbc' : 'gb')).toUpperCase()}</span><div class="n"><div></div><small>${(r.size / 1024) | 0} KB</small></div><button aria-label="Remover">✕</button>`;
     row.querySelector('.n div').textContent = r.name;
-    row.querySelector('.n').onclick = row.querySelector('.tag').onclick = () => { closeSheet(); startRom(new Uint8Array(r.data), r.name, false); };
+    row.querySelector('.n').onclick = row.querySelector('.tag').onclick = async () => { closeSheet(); const d = await libData(r.id); if (!d) return toast('Não achei esse jogo guardado — abra o arquivo de novo'); startRom(new Uint8Array(d), r.name, false); };
     const del = row.querySelector('button');
     del.onclick = async (e) => {
       e.stopPropagation();
@@ -3645,7 +3646,9 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) persi
 window.addEventListener('pagehide', () => persistSave(true));
 
 // ---------- Iniciar jogo ----------
+const BIG_ROM = 80 * 1024 * 1024;
 async function startRom(u8, name, addToLib) {
+  let bigNote = '';
   try {
     if (u8.length < 0x150) throw new Error('Arquivo pequeno demais');
     if (gb) persistSave(true);
@@ -3671,10 +3674,13 @@ async function startRom(u8, name, addToLib) {
     paused = false; updatePause();
     rw = rr = 0;
     running = true;
-    if (addToLib) await libPut({ id: romId, name: name.replace(/\.(gbc?|cgb|gba|agb|nds|zip)$/i, ''), size: u8.length, sys: gb.sys, data: u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength), played: Date.now() });
-    else { const all = await libAll(); const r = all.find(x => x.id === romId); if (r) { r.played = Date.now(); libPut(r); } }
-    store.set('lep:last', romId);
+    const big = u8.length > BIG_ROM, meta = { id: romId, name: name.replace(/\.(gbc?|cgb|gba|agb|nds|zip)$/i, ''), size: u8.length, sys: gb.sys, played: Date.now() };
+    if (addToLib && !big) { const whole = u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength; if (!(await libPut(meta, whole ? u8.buffer : u8.slice().buffer))) bigNote = 'Sem espaço para guardar este jogo na biblioteca'; }
+    else if (!addToLib) libPut(meta);
+    else bigNote = 'Jogo grande: não fica na biblioteca, abra o arquivo de novo da próxima vez';
+    if (!big) store.set('lep:last', romId); else store.set('lep:last', '');
     toast(({ gb: 'Game Boy', gbc: 'Game Boy Color', gba: 'Game Boy Advance', nds: 'Nintendo DS (etapa 1)' })[gb.sys] + ' · ' + gb.title);
+    if (bigNote) setTimeout(() => toast(bigNote), 2200);
   } catch (e) { toast(e.message); }
 }
 async function openFile(file) {
@@ -3848,8 +3854,9 @@ ctx2d.fillStyle = '#0d0c11'; ctx2d.fillRect(0, 0, 160, 144);
 // abre o último jogo jogado
 (async () => {
   const last = store.get('lep:last'); if (!last) return;
-  const r = (await libAll()).find(x => x.id === last);
-  if (r && !gb) { await startRom(new Uint8Array(r.data), r.name, false); paused = true; updatePause(); toast('Toque ▶ para continuar'); }
+  const r = (await libAll()).find(x => x.id === last); if (!r || r.size > BIG_ROM) return;
+  const data = await libData(last); if (!data) return;
+  if (!gb) { await startRom(new Uint8Array(data), r.name, false); paused = true; updatePause(); toast('Toque ▶ para continuar'); }
 })();
 })();
 </script>
