@@ -161,6 +161,7 @@
       <button id="mLoadState">⏪ Carregar estado<small>Volta ao momento salvo</small></button>
       <button id="mReset">🔄 Reiniciar</button>
       <button id="mSound">🔊 Som: ligado</button>
+      <button class="wide" id="mDiag">🩺 Diagnóstico<small>Mostra onde o jogo parou — mande um print disso</small></button>
     </div>
     <div id="installBox" style="display:none">
       <h3>Aplicativo</h3>
@@ -185,6 +186,7 @@
     <div class="row" style="margin-top:14px"><button id="mClose" style="width:100%;text-align:center">Fechar</button></div>
   </div>
 </div>
+<div id="diag" style="display:none;position:fixed;inset:0;z-index:30;background:#0d0c11;color:#d8f5e6;padding:calc(12px + env(safe-area-inset-top)) 10px 10px;overflow:auto"><pre id="diagTxt" style="margin:0;font:11px/1.45 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all;-webkit-user-select:text;user-select:text"></pre><button class="primary" id="diagClose" style="margin-top:12px;width:100%">Fechar</button></div>
 <div id="toast"></div>
 <input type="file" id="fileRom">
 <input type="file" id="fileSav">
@@ -2776,6 +2778,7 @@ class NDS {
     this.audioBuf = new Float32Array(16); this.audioLen = 0; this.audioRate = 32768;
     this.saveData = new Uint8Array(0); this.svAddrLen = 0; this.saveDirty = false; this.saveUsed = false;
     this.irCart = rom[0x0C] === 0x49; if (this.irCart) this.svAlloc(3, 0x80000);
+    this.dPc = [[], []]; this.dPolys = 0; this.dSwaps = 0; this.dCard = 0; this.dSv = []; this.dSwi = [new Set(), new Set()]; this.dFrame = 0;
     this.buildFirmware();
     this.reset();
   }
@@ -2788,6 +2791,19 @@ class NDS {
     this.svAddrLen = d.length <= 512 ? 1 : d.length <= 0x10000 ? 2 : 3;
     const size = this.svAddrLen === 1 ? 512 : this.svAddrLen === 2 ? 0x10000 : Math.max(0x80000, d.length);
     this.saveData = new Uint8Array(size).fill(0xFF); this.saveData.set(d.subarray(0, size)); this.saveUsed = true;
+  }
+  diag() {
+    const h = (v, n = 8) => (v >>> 0).toString(16).toUpperCase().padStart(n, '0'), io = this.io, g = this.g;
+    const cpu = (c) => { const p = this.cpu[c]; return `pc ${h(p.r[15])}${p.cT ? ' T' : ' A'} lr ${h(p.r[14])} sp ${h(p.r[13])}\n  modo ${h(p.mode, 2)} I${p.cI} ${p.halted ? 'PARADO' : 'rodando'}${p.intrWaiting ? ' esperando-irq' : ''}\n  IME ${this.ime[c]} IE ${h(this.ie[c])} IF ${h(this.if_[c])}\n  pcs ${this.dPc[c].map(x => h(x)).join(' ')}`; };
+    return [`ARM9 ${cpu(0)}`, `ARM7 ${cpu(1)}`,
+      `DISP A ${h(io[0][0])} B ${h(io[0][0x400])} POW ${h(io[0][0x304 >> 2], 4)} STAT ${h(this.dispstat[0], 4)}/${h(this.dispstat[1], 4)}`,
+      `VRAM ${h(io[0][0x240 >> 2])} ${h(io[0][0x244 >> 2])} ${h(io[0][0x248 >> 2], 4)} CAP ${h(io[0][0x64 >> 2])}`,
+      `3D polis ${this.dPolys} trocas ${this.dSwaps} ctl ${h(io[0][0x60 >> 2], 4)} irq ${g.irq}`,
+      `IPC sync ${this.ipcOut[0]}/${this.ipcOut[1]} fifo ${this.fifo[0].n}/${this.fifo[1].n} cnt ${h(this.fcnt[0], 4)}/${h(this.fcnt[1], 4)} err ${this.ferr[0]}/${this.ferr[1]}`,
+      `CARD ctl ${h(this.romctrl)} cmd ${h(io[this.cardC][0x1A8 >> 2])} leituras ${this.dCard}`,
+      `SAVE end ${this.svAddrLen} tam ${this.saveData.length} usado ${this.saveUsed ? 1 : 0} ir ${this.irCart ? 1 : 0} cmds ${this.dSv.map(x => h(x, 2)).join(' ')}`,
+      `SWI9 ${[...this.dSwi[0]].map(x => h(x, 2)).join(' ')} | SWI7 ${[...this.dSwi[1]].map(x => h(x, 2)).join(' ')}`,
+      `SOM ${h(io[1][0x500 >> 2], 4)} TMR9 ${this.timers[0].map(t => t.on ? 1 : 0).join('')} TMR7 ${this.timers[1].map(t => t.on ? 1 : 0).join('')} quadro ${this.dFrame}`].join('\n');
   }
   saveState() { return null; }
   loadState() { throw new Error('sem estado'); }
@@ -3046,7 +3062,7 @@ class NDS {
   // ----- Cartucho -----
   cardStart(c, nv) {
     const io = this.io[c], w0 = io[0x1A8 >> 2], cmd = w0 & 0xFF, bs = (nv >>> 24) & 7;
-    this.cardC = c; this.cardLen = bs === 0 ? 0 : bs === 7 ? 4 : 0x100 << bs; this.cardPos = 0;
+    this.dCard++; this.cardC = c; this.cardLen = bs === 0 ? 0 : bs === 7 ? 4 : 0x100 << bs; this.cardPos = 0;
     if (cmd === 0xB7) { this.cardKind = 1; this.cardAddr = (((w0 >>> 8) & 0xFF) << 24 | ((w0 >>> 16) & 0xFF) << 16 | (w0 >>> 24) << 8 | (io[0x1AC >> 2] & 0xFF)) >>> 0; }
     else if (cmd === 0xB8 || cmd === 0x90) this.cardKind = 2;
     else this.cardKind = 0;
@@ -3077,7 +3093,7 @@ class NDS {
   }
   svByte(v, last) {
     const s = this.sv; let out = 0xFF;
-    if (s.pos === 0) { s.cmd = v; s.addr = 0; s.tmp.length = 0; if (v === 6) s.wren = true; else if (v === 4) s.wren = false; }
+    if (s.pos === 0) { this.dSv.push(v); if (this.dSv.length > 8) this.dSv.shift(); s.cmd = v; s.addr = 0; s.tmp.length = 0; if (v === 6) s.wren = true; else if (v === 4) s.wren = false; }
     else {
       const al = this.svAddrLen, cmd = s.cmd, hi = al === 1, d = this.saveData;
       const isRead = cmd === 0x03 || cmd === 0x0B, isWrite = cmd === 0x02 || cmd === 0x0A, isErase = (cmd === 0xD8 || cmd === 0xDB) && al === 3;
@@ -3208,6 +3224,8 @@ class NDS {
 
   // ================= Quadro =================
   runFrame() {
+    this.dFrame++;
+    if ((this.dFrame & 7) === 0) for (let c = 0; c < 2; c++) { const a = this.dPc[c]; a.push(this.cpu[c].r[15]); if (a.length > 6) a.shift(); }
     for (let line = 0; line < 263; line++) {
       this.vcount = line;
       for (let c = 0; c < 2; c++) {
@@ -3433,7 +3451,7 @@ class NDS {
 
   // ================= BIOS (emulação de alto nível) =================
   swi(c, cpu, n) {
-    const r = cpu.r; cpu.cycles += 20;
+    const r = cpu.r; cpu.cycles += 20; this.dSwi[c].add(n);
     switch (n) {
       case 0x03: cpu.cycles += Math.min((r[0] >>> 0) * 4, 2000000); return;
       case 0x05: r[0] = 1; r[1] = 1;
@@ -3725,6 +3743,7 @@ function nds3dInstall(N) {
     if (!g.swap) return;
     g.swap = false;
     const polys = g.polys; g.polys = []; g.nverts = 0;
+    this.dPolys = polys.length; this.dSwaps++;
     this.gxRender(polys);
   };
   P.gxTexture = function (tp, palBase) {
@@ -4045,7 +4064,7 @@ $('fileSav').onchange = async (e) => {
 
 // ---------- Loop principal ----------
 const FRAME_MS = 1000 * 70224 / 4194304;
-let last = performance.now(), acc = 0;
+let last = performance.now(), acc = 0, msAvg = 0;
 function loop(now) {
   requestAnimationFrame(loop);
   let dt = now - last; last = now;
@@ -4054,7 +4073,7 @@ function loop(now) {
   acc += dt;
   let n = 0;
   if (turbo) { for (let i = gb.sys === 'nds' ? 2 : gb.sys === 'gba' ? 3 : 4; i > 0; i--) { gb.runFrame(); pumpAudio(); } acc = 0; n = 1; }
-  else { const t0 = performance.now(); while (acc >= FRAME_MS && n < 3) { gb.runFrame(); pumpAudio(); acc -= FRAME_MS; n++; if (performance.now() - t0 > 11) { if (acc > FRAME_MS) acc = FRAME_MS * 0.5; break; } } }
+  else { const t0 = performance.now(); while (acc >= FRAME_MS && n < 3) { const tf = performance.now(); gb.runFrame(); msAvg += (performance.now() - tf - msAvg) * 0.05; pumpAudio(); acc -= FRAME_MS; n++; if (performance.now() - t0 > 11) { if (acc > FRAME_MS) acc = FRAME_MS * 0.5; break; } } }
   if (acc > FRAME_MS * 3) acc = 0;
   if (n) { img32.set(gb.out); ctx2d.putImageData(img, 0, 0); }
 }
@@ -4158,6 +4177,15 @@ $('btnMenu').onclick = openSheet; $('mClose').onclick = closeSheet;
 $('sheet').onclick = (e) => { if (e.target.id === 'sheet') closeSheet(); };
 $('btnOpenEmpty').onclick = $('mOpen').onclick = () => $('fileRom').click();
 $('mReset').onclick = () => { if (!gb) return; persistSave(true); gb.reset(); closeSheet(); toast('Reiniciado'); };
+let diagTimer = 0;
+function showDiag() {
+  if (!gb) return toast('Abra um jogo primeiro');
+  closeSheet(); $('diag').style.display = 'block';
+  const upd = () => { $('diagTxt').textContent = 'LE Pocket diagnóstico · ' + gb.sys.toUpperCase() + ' · ' + gb.title + '\n' + msAvg.toFixed(1) + ' ms por quadro (ideal: abaixo de 16)' + (turbo ? ' · TURBO' : '') + (paused ? ' · PAUSADO' : '') + '\n\n' + (gb.diag ? gb.diag() : 'Sem detalhes para este console.'); };
+  upd(); clearInterval(diagTimer); diagTimer = setInterval(upd, 500);
+}
+$('mDiag').onclick = showDiag;
+$('diagClose').onclick = () => { clearInterval(diagTimer); $('diag').style.display = 'none'; };
 function updSound() { $('mSound').textContent = soundOn ? '🔊 Som: ligado' : '🔇 Som: desligado'; }
 $('mSound').onclick = () => { soundOn = !soundOn; store.set('lep:sound', soundOn ? '1' : '0'); updSound(); initAudio(); };
 updSound();
