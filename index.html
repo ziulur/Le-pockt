@@ -2861,6 +2861,7 @@ class NDS {
   }
   remap() {
     const io = this.io[0], cnt = [0, 1, 2, 3, 4, 5, 6, 8, 9].map(i => (io[(0x240 + (i & ~3)) >> 2] >>> ((i & 3) << 3)) & 0xFF);
+    if (this.g) this.g.texCache.clear();
     this.tTex.fill(-1); this.tTexPal.fill(-1); this.tBgA.fill(-1); this.tBgB.fill(-1); this.tObjA.fill(-1); this.tObjB.fill(-1); this.tLcdc.fill(-1);
     this.bgExt[0].fill(-1); this.bgExt[1].fill(-1); this.objExt[0] = -1; this.objExt[1] = -1; this.vt7[0] = -1; this.vt7[1] = -1;
     const set = (t, page, b) => { for (let i = 0; i < BANK_PAGES[b]; i++) if (page + i < t.length) t[page + i] = BANK_OFF[b] + i * 0x4000; };
@@ -3762,7 +3763,6 @@ function nds3dInstall(N) {
     const g = this.g, io = this.io[0], color = g.color, alpha = g.alpha, depth = g.depth;
     const cc = io[0x350 >> 2], d3 = io[0x60 >> 2], texOn = d3 & 1, blendOn = d3 & 8;
     color.fill(cc & 0x7FFF); alpha.fill((cc >> 16) & 31); depth.fill(2);
-    g.texCache.clear();
     const order = polys.filter(p => ((p.attr >> 16) & 31) === 31 || ((p.attr >> 16) & 31) === 0).concat(polys.filter(p => { const a = (p.attr >> 16) & 31; return a > 0 && a < 31; }));
     for (const p of order) {
       const fmt = (p.tp >>> 26) & 7, tex = (texOn && fmt) ? this.gxTexture(p.tp, p.pal) : null;
@@ -3776,14 +3776,16 @@ function nds3dInstall(N) {
         const inv = 1 / area;
         let x0 = Math.floor(Math.min(a.x, b.x, c.x)), x1 = Math.ceil(Math.max(a.x, b.x, c.x)), y0 = Math.floor(Math.min(a.y, b.y, c.y)), y1 = Math.ceil(Math.max(a.y, b.y, c.y));
         if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0; if (x1 > 255) x1 = 255; if (y1 > 191) y1 = 191;
+        const d0 = (b.y - c.y) * inv, d1 = (c.y - a.y) * inv, dzx = d0 * (a.z - c.z) + d1 * (b.z - c.z), px0 = x0 + 0.5;
         for (let y = y0; y <= y1; y++) {
           const py = y + 0.5, row = y * 256;
-          for (let x = x0; x <= x1; x++) {
-            const px = x + 0.5;
-            const w0 = ((b.x - px) * (c.y - py) - (b.y - py) * (c.x - px)) * inv; if (w0 < 0) continue;
-            const w1 = ((c.x - px) * (a.y - py) - (c.y - py) * (a.x - px)) * inv; if (w1 < 0) continue;
-            const w2 = 1 - w0 - w1; if (w2 < 0) continue;
-            const z = w0 * a.z + w1 * b.z + w2 * c.z, idx = row + x, dz = depth[idx];
+          let w0 = ((b.x - px0) * (c.y - py) - (b.y - py) * (c.x - px0)) * inv, w1 = ((c.x - px0) * (a.y - py) - (c.y - py) * (a.x - px0)) * inv;
+          let z = w0 * a.z + w1 * b.z + (1 - w0 - w1) * c.z, started = false;
+          for (let x = x0; x <= x1; x++, w0 += d0, w1 += d1, z += dzx) {
+            if (w0 < -1e-7 || w1 < -1e-7) { if (started) break; continue; }
+            const w2 = 1 - w0 - w1; if (w2 < -1e-7) { if (started) break; continue; }
+            started = true;
+            const idx = row + x, dz = depth[idx];
             if (eq ? Math.abs(z - dz) > 0.002 : z >= dz) continue;
             const k = 1 / (w0 * a.iw + w1 * b.iw + w2 * c.iw);
             let r = (w0 * a.r + w1 * b.r + w2 * c.r) * k, gg = (w0 * a.g + w1 * b.g + w2 * c.g) * k, bb = (w0 * a.b + w1 * b.b + w2 * c.b) * k, al = pa;
