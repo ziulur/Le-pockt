@@ -107,7 +107,7 @@
   .seg { display: flex; gap: 6px; margin-bottom: 16px; }
   .seg button { flex: 1; background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 12px; padding: 10px 4px; font-size: 13px; font-weight: 600; }
   .seg button.sel { border-color: var(--accent); color: var(--accent); }
-  #toast { position: fixed; left: 50%; top: calc(14px + env(safe-area-inset-top)); transform: translateX(-50%) translateY(-80px); background: var(--panel2); border: 1px solid var(--line); padding: 10px 16px; border-radius: 14px; font-size: 14px; font-weight: 600; transition: transform .25s; z-index: 20; white-space: nowrap; }
+  #toast { max-width: 92vw; white-space: normal !important; text-align: center; position: fixed; left: 50%; top: calc(14px + env(safe-area-inset-top)); transform: translateX(-50%) translateY(-80px); background: var(--panel2); border: 1px solid var(--line); padding: 10px 16px; border-radius: 14px; font-size: 14px; font-weight: 600; transition: transform .25s; z-index: 20; white-space: nowrap; }
   #toast.show { transform: translateX(-50%) translateY(0); }
   input[type=file] { display: none; }
 </style>
@@ -3649,8 +3649,11 @@ async function startRom(u8, name, addToLib) {
   try {
     if (u8.length < 0x150) throw new Error('Arquivo pequeno demais');
     if (gb) persistSave(true);
+    if (u8[0] === 0x37 && u8[1] === 0x7A && u8[2] === 0xBC && u8[3] === 0xAF) throw new Error('Arquivo .7z: extraia o jogo antes de abrir');
+    if (u8[0] === 0x52 && u8[1] === 0x61 && u8[2] === 0x72 && u8[3] === 0x21) throw new Error('Arquivo .rar: extraia o jogo antes de abrir');
     const isNds = /\.nds$/i.test(name) || (u8.length > 0x200 && u8[0x15C] === 0x56 && u8[0x15D] === 0xCF);
     const isGba = !isNds && /\.(gba|agb)$/i.test(name) || (!/\.(gbc?|cgb)$/i.test(name) && u8.length >= 0xC0 && u8[0xB2] === 0x96 && u8[0x104] !== 0xCE);
+    if (!isNds && !isGba) { let x = 0; for (let i = 0x134; i <= 0x14C; i++) x = (x - u8[i] - 1) & 0xFF; if (x !== u8[0x14D]) throw new Error('Arquivo não reconhecido como jogo'); }
     gb = isNds ? new NDS(u8) : isGba ? new GBA(u8) : new GB(u8, { sampleRate: actx ? actx.sampleRate : 44100, shades: PALETTES[palName] });
     canvas.width = gb.width; canvas.height = gb.height; canvas.style.aspectRatio = gb.width + ' / ' + gb.height; canvas.style.setProperty('--ar', String(gb.width / gb.height));
     img = ctx2d.createImageData(gb.width, gb.height); img32 = new Uint32Array(img.data.buffer);
@@ -3672,7 +3675,7 @@ async function startRom(u8, name, addToLib) {
     else { const all = await libAll(); const r = all.find(x => x.id === romId); if (r) { r.played = Date.now(); libPut(r); } }
     store.set('lep:last', romId);
     toast(({ gb: 'Game Boy', gbc: 'Game Boy Color', gba: 'Game Boy Advance', nds: 'Nintendo DS (etapa 1)' })[gb.sys] + ' · ' + gb.title);
-  } catch (e) { toast('Erro: ' + e.message); }
+  } catch (e) { toast(e.message); }
 }
 async function openFile(file) {
   let u8 = new Uint8Array(await file.arrayBuffer()); let name = file.name;
