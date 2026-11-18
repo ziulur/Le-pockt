@@ -201,7 +201,7 @@ function nds3dInstall(N) {
     g.swap = false;
     const polys = g.polys; g.polys = []; g.nverts = 0;
     this.dPolys = polys.length; this.dSwaps++; this.d3s = this.d3; this.d3 = { cmd: 0, vtx: 0, beg: 0, cull: 0, clip: 0 };
-    if (!this.skipDraw || this.capOn) this.gxRender(polys);
+    if (!this.skipDraw || this.capOn) { this.gxRender(polys); this.gxSample(polys); }
   };
   P.gxTexture = function (tp, palBase) {
     const g = this.g, key = tp * 8192 + palBase; let tx = g.texCache.get(key);
@@ -284,7 +284,7 @@ function nds3dInstall(N) {
             }
             if (hilite) { r += hr; gg += hg; bb += hb; }
             if (al <= 0) continue;
-            let ri = r < 0 ? 0 : r > 31 ? 31 : r | 0, gi = gg < 0 ? 0 : gg > 31 ? 31 : gg | 0, bi = bb < 0 ? 0 : bb > 31 ? 31 : bb | 0;
+            let ri = r < 0 ? 0 : r >= 30.5 ? 31 : (r + 0.5) | 0, gi = gg < 0 ? 0 : gg >= 30.5 ? 31 : (gg + 0.5) | 0, bi = bb < 0 ? 0 : bb >= 30.5 ? 31 : (bb + 0.5) | 0;
             if (al < 31 && blendOn && alpha[idx]) {
               const old = color[idx], fa = al + 1, fb = 31 - al;
               ri = (ri * fa + (old & 31) * fb) >> 5; gi = (gi * fa + ((old >> 5) & 31) * fb) >> 5; bi = (bi * fa + ((old >> 10) & 31) * fb) >> 5;
@@ -296,6 +296,13 @@ function nds3dInstall(N) {
         }
       }
     }
+  };
+  P.gxSample = function (polys) {
+    const g = this.g, h = (v, n) => (v >>> 0).toString(16).toUpperCase().padStart(n, '0');
+    let best = -1, bd = 1e9;
+    for (let i = 0; i < 256 * 192; i += 3) if (g.alpha[i]) { const x = i & 255, y = i >> 8, dd = Math.abs(x - 128) + Math.abs(y - 96); if (dd < bd) { bd = dd; best = i; } }
+    this.d3s.px = best < 0 ? null : { x: best & 255, y: best >> 8, c: g.color[best], a: g.alpha[best] };
+    this.d3s.list = polys.slice(0, 10).map((p) => { const v = p.v[0], k = 1 / v.iw; return `${(p.tp >>> 26) & 7}/${h(p.pal, 3)}/${Math.round(v.r * k)},${Math.round(v.g * k)},${Math.round(v.b * k)}/a${(p.attr >> 16) & 31}m${(p.attr >> 4) & 3}`; }).join(' ');
   };
   P.gxLine = function (y, out) {
     const g = this.g, color = g.color, alpha = g.alpha, row = y * 256;
