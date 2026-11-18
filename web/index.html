@@ -2824,7 +2824,7 @@ class NDS {
     return [`ARM9 ${cpu(0)}`, `ARM7 ${cpu(1)}`,
       `DISP A ${h(io[0][0])} B ${h(io[0][0x400])} POW ${h(io[0][0x304 >> 2], 4)} STAT ${h(this.dispstat[0], 4)}/${h(this.dispstat[1], 4)}`,
       `VRAM ${h(io[0][0x240 >> 2])} ${h(io[0][0x244 >> 2])} ${h(io[0][0x248 >> 2], 4)} CAP ${h(io[0][0x64 >> 2])}`,
-      `3D polis ${this.dPolys} trocas ${this.dSwaps} dma3d ${this.dDma7}\n3Dq cmds ${this.d3s ? this.d3s.cmd : 0} begin ${this.d3s ? this.d3s.beg : 0} vtx ${this.d3s ? this.d3s.vtx : 0} costas ${this.d3s ? this.d3s.cull : 0} fora ${this.d3s ? this.d3s.clip : 0}\n3Dv fora ${this.d3s && this.d3s.out ? this.d3s.out : '-'} | dentro ${this.d3s && this.d3s.inn ? this.d3s.inn : '-'}\n3Df proj ${this.d3s && this.d3s.outP || '-'} | pos ${this.d3s && this.d3s.outM || '-'}\n3Dp ${this.d3s && this.d3s.poly || '-'}\n3Dt ${this.d3s && this.d3s.pal || '-'} | escritas LCDC ${this.dLcdc} | trocas VRAM ${this.dRemap}\nPROJ ${this.g ? Array.from(this.g.proj, (x) => x.toFixed(2)).join(' ') : ''}\nPOS ${this.g ? Array.from(this.g.pos, (x) => x.toFixed(2)).join(' ') : ''} sp ${this.g ? this.g.sp : 0}\nIRQ9 ${[...this.dIrq].map((v, i) => v ? i + ':' + v : '').filter(Boolean).join(' ')} ctl ${h(io[0][0x60 >> 2], 4)} irq ${g.irq}`,
+      `3D polis ${this.dPolys} trocas ${this.dSwaps} dma3d ${this.dDma7}\n3Dq cmds ${this.d3s ? this.d3s.cmd : 0} begin ${this.d3s ? this.d3s.beg : 0} vtx ${this.d3s ? this.d3s.vtx : 0} costas ${this.d3s ? this.d3s.cull : 0} fora ${this.d3s ? this.d3s.clip : 0}\n3Dv fora ${this.d3s && this.d3s.out ? this.d3s.out : '-'} | dentro ${this.d3s && this.d3s.inn ? this.d3s.inn : '-'}\n3Df proj ${this.d3s && this.d3s.outP || '-'} | pos ${this.d3s && this.d3s.outM || '-'}\n3Dp ${this.d3s && this.d3s.poly || '-'}\n3Dl ${this.d3s && this.d3s.list || '-'}\nPIX ${this.pixDiag()}\n3Dt ${this.d3s && this.d3s.pal || '-'} | escritas LCDC ${this.dLcdc} | trocas VRAM ${this.dRemap}\nPROJ ${this.g ? Array.from(this.g.proj, (x) => x.toFixed(2)).join(' ') : ''}\nPOS ${this.g ? Array.from(this.g.pos, (x) => x.toFixed(2)).join(' ') : ''} sp ${this.g ? this.g.sp : 0}\nIRQ9 ${[...this.dIrq].map((v, i) => v ? i + ':' + v : '').filter(Boolean).join(' ')} ctl ${h(io[0][0x60 >> 2], 4)} irq ${g.irq}`,
       `IPC sync ${this.ipcOut[0]}/${this.ipcOut[1]} fifo ${this.fifo[0].n}/${this.fifo[1].n} cnt ${h(this.fcnt[0], 4)}/${h(this.fcnt[1], 4)} err ${this.ferr[0]}/${this.ferr[1]}`,
       `CARD ctl ${h(this.romctrl)} cmd ${h(io[this.cardC][0x1A8 >> 2])} leituras ${this.dCard}`,
       `SAVE end ${this.svAddrLen} tam ${this.saveData.length} usado ${this.saveUsed ? 1 : 0} ir ${this.irCart ? 1 : 0} cmds ${this.dSv.map(x => h(x, 2)).join(' ')}`,
@@ -2837,6 +2837,13 @@ class NDS {
       `SOM ${h(io[1][0x500 >> 2], 4)} TMR9 ${this.timers[0].map(t => t.on ? 1 : 0).join('')} TMR7 ${this.timers[1].map(t => t.on ? 1 : 0).join('')} quadro ${this.dFrame}`].join('\n');
   }
   // ----- Salvar estado: copia toda a memória e o estado interno (o jogo continua exatamente de onde parou) -----
+  pixDiag() {
+    const s = this.d3s, h = (v, k) => (v >>> 0).toString(16).toUpperCase().padStart(k, '0'), R = (o) => h(this.io16[o >> 1], 4);
+    const regs = `BG0 ${R(8)} BG1 ${R(0xA)} BG2 ${R(0xC)} BG3 ${R(0xE)} BLD ${R(0x50)} ALF ${R(0x52)} Y ${R(0x54)} WIN ${R(0x48)}/${R(0x4A)} MB ${R(0x6C)}`;
+    if (!s || !s.px) return '3D vazio · ' + regs;
+    const top = (this.io[0][0x304 >> 2] & 0x8000) !== 0, o = this.out[(s.px.y + (top ? 0 : 192)) * 256 + s.px.x];
+    return `3D em ${s.px.x},${s.px.y} cor ${h(s.px.c, 4)} alfa ${s.px.a} → tela ${h(o & 0xFFFFFF, 6)} · ${regs}`;
+  }
   saveState() {
     const s = { v: 1, sys: 'nds', title: this.title, f: {}, cpu: [] };
     for (const k of Object.keys(this)) {
@@ -3846,7 +3853,7 @@ function nds3dInstall(N) {
     g.swap = false;
     const polys = g.polys; g.polys = []; g.nverts = 0;
     this.dPolys = polys.length; this.dSwaps++; this.d3s = this.d3; this.d3 = { cmd: 0, vtx: 0, beg: 0, cull: 0, clip: 0 };
-    if (!this.skipDraw || this.capOn) this.gxRender(polys);
+    if (!this.skipDraw || this.capOn) { this.gxRender(polys); this.gxSample(polys); }
   };
   P.gxTexture = function (tp, palBase) {
     const g = this.g, key = tp * 8192 + palBase; let tx = g.texCache.get(key);
@@ -3929,7 +3936,7 @@ function nds3dInstall(N) {
             }
             if (hilite) { r += hr; gg += hg; bb += hb; }
             if (al <= 0) continue;
-            let ri = r < 0 ? 0 : r > 31 ? 31 : r | 0, gi = gg < 0 ? 0 : gg > 31 ? 31 : gg | 0, bi = bb < 0 ? 0 : bb > 31 ? 31 : bb | 0;
+            let ri = r < 0 ? 0 : r >= 30.5 ? 31 : (r + 0.5) | 0, gi = gg < 0 ? 0 : gg >= 30.5 ? 31 : (gg + 0.5) | 0, bi = bb < 0 ? 0 : bb >= 30.5 ? 31 : (bb + 0.5) | 0;
             if (al < 31 && blendOn && alpha[idx]) {
               const old = color[idx], fa = al + 1, fb = 31 - al;
               ri = (ri * fa + (old & 31) * fb) >> 5; gi = (gi * fa + ((old >> 5) & 31) * fb) >> 5; bi = (bi * fa + ((old >> 10) & 31) * fb) >> 5;
@@ -3941,6 +3948,13 @@ function nds3dInstall(N) {
         }
       }
     }
+  };
+  P.gxSample = function (polys) {
+    const g = this.g, h = (v, n) => (v >>> 0).toString(16).toUpperCase().padStart(n, '0');
+    let best = -1, bd = 1e9;
+    for (let i = 0; i < 256 * 192; i += 3) if (g.alpha[i]) { const x = i & 255, y = i >> 8, dd = Math.abs(x - 128) + Math.abs(y - 96); if (dd < bd) { bd = dd; best = i; } }
+    this.d3s.px = best < 0 ? null : { x: best & 255, y: best >> 8, c: g.color[best], a: g.alpha[best] };
+    this.d3s.list = polys.slice(0, 10).map((p) => { const v = p.v[0], k = 1 / v.iw; return `${(p.tp >>> 26) & 7}/${h(p.pal, 3)}/${Math.round(v.r * k)},${Math.round(v.g * k)},${Math.round(v.b * k)}/a${(p.attr >> 16) & 31}m${(p.attr >> 4) & 3}`; }).join(' ');
   };
   P.gxLine = function (y, out) {
     const g = this.g, color = g.color, alpha = g.alpha, row = y * 256;
