@@ -153,6 +153,8 @@ section('DS 3D sombreamento', () => {
   W(0x04000440, 1); W(0x04000400, 0x16); for (let i = 0; i < 8; i++) W(0x04000400, (i % 5 === 0) ? 4096 : 0); W(0x04000480, 0x7FFF); for (let i = 8; i < 16; i++) W(0x04000400, (i % 5 === 0) ? 4096 : 0);
   check('matriz compactada intacta com escrita direta no meio', Array.from(g.g.pos).join(','), '1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1'); W(0x04000440, 2);
   g.w16(0, 0x04000060, 0);
+  // 3D por cima com mistura ligada (EVA=EVB=0): usa o alfa do 3D, não fica preto
+  g.w16(0, 0x04000050, 0x2041); g.w16(0, 0x04000052, 0); check('3D com mistura 2D não vira preto', quad(0, 0x7FFF), 0xffffffff); g.w16(0, 0x04000050, 0);
   // coordenada de textura vinda da matriz de textura (modo 1): translação de 8 texels = 128 em 1/16 de texel
   W(0x04000440, 3); W(0x04000454, 0); W(0x04000470, 0); W(0x04000470, 0); W(0x04000470, 0); // MTX_TRANS zero
   W(0x04000440, 3); W(0x04000454, 0); W(0x04000470, F(128)); W(0x04000470, 0); W(0x04000470, 0); W(0x04000440, 2);
