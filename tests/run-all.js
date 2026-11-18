@@ -155,6 +155,9 @@ section('DS 3D sombreamento', () => {
   g.w16(0, 0x04000060, 0);
   // 3D por cima com mistura ligada (EVA=EVB=0): usa o alfa do 3D, não fica preto
   g.w16(0, 0x04000050, 0x2041); g.w16(0, 0x04000052, 0); check('3D com mistura 2D não vira preto', quad(0, 0x7FFF), 0xffffffff); g.w16(0, 0x04000050, 0);
+  // a porta compactada ocupa 0x4000400..0x400043F (cópia com endereço subindo, como stmia)
+  { W(0x04000440, 1); const words = [0x15 | (0x1B << 8), F(2), F(3), F(4)]; words.forEach((w, i) => W(0x04000400 + i * 4, w));
+    check('porta compactada nos endereços espelhados', [g.g.pos[0], g.g.pos[5], g.g.pos[10]].join(','), '2,3,4'); W(0x04000440, 2); }
   // coordenada de textura vinda da matriz de textura (modo 1): translação de 8 texels = 128 em 1/16 de texel
   W(0x04000440, 3); W(0x04000454, 0); W(0x04000470, 0); W(0x04000470, 0); W(0x04000470, 0); // MTX_TRANS zero
   W(0x04000440, 3); W(0x04000454, 0); W(0x04000470, F(128)); W(0x04000470, 0); W(0x04000470, 0); W(0x04000440, 2);
