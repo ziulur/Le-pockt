@@ -3697,8 +3697,7 @@ function nds3dInstall(N) {
       else { g.params[g.n++] = v; if (--g.left === 0) { this.gxExec(g.cmd); g.pack >>>= 8; this.gxNext(); this.gxFlushDefer(); } }
       return;
     }
-    // escrita direta no meio de um comando compactado: espera ele terminar para manter a ordem
-    if (g.left > 0) { (g.defer || (g.defer = [])).push(o, v); if (g.defer.length < 512) return; g.defer.length = 0; }
+    // escrita direta: executa na hora com parâmetros próprios (não mexe no comando compactado pela metade)
     const c = (o & 0x1FF) >> 2, n = GX_N[c]; if (!g.dparams) { g.dparams = new Int32Array(32); g.dcmd = -1; }
     if (n === 0) { g.dn = 0; g.dcmd = -1; this.gxExec(c); return; }
     if (g.dcmd !== c) { g.dcmd = c; g.dn = 0; }
