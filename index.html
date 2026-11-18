@@ -1205,7 +1205,7 @@ class GBA {
     this.fl = { state: 0, id: false, erase: false, write: false, bankSel: false, bank: 0 };
     this.eeAddrBits = 0; this.eeReadAddr = 0; this.eeReadPos = -1;
     this.mlo = 0; this.mhi = 0;
-    this.audioLen = 0;
+    this.audioLen = 0; this.hpXl = this.hpXr = this.hpYl = this.hpYr = 0;
   }
 
   // ================= Memória =================
@@ -1468,7 +1468,7 @@ class GBA {
   audioCatchUp(now) {
     if (this.audioT + 512 > now) return;
     const apu = this.apu, buf = this.audioBuf, cnt = this.io16[0x82 >> 1], on = this.io[0x84] & 0x80;
-    const psgVol = [0.25, 0.5, 1, 0][cnt & 3] * 0.6;
+    const psgVol = [0.25, 0.5, 1, 0][cnt & 3] * 0.9;
     const fa = this.fifo[0], fbb = this.fifo[1];
     const a = (fa.cur / 128) * ((cnt & 4) ? 1 : 0.5), b = (fbb.cur / 128) * ((cnt & 8) ? 1 : 0.5);
     const dl = ((cnt & 0x0200) ? a : 0) + ((cnt & 0x2000) ? b : 0), dr = ((cnt & 0x0100) ? a : 0) + ((cnt & 0x1000) ? b : 0);
@@ -1477,8 +1477,12 @@ class GBA {
       let l = 0, r = 0;
       if (on) {
         apu.advance(128); apu.mix();
-        l = (apu.mL * psgVol + dl) * 0.45; r = (apu.mR * psgVol + dr) * 0.45;
+        l = (apu.mL * psgVol + dl) * 0.42; r = (apu.mR * psgVol + dr) * 0.42;
       }
+      // filtro passa-alta (capacitor de saída do GBA): tira o nível contínuo dos canais PSG, que causava estalos e saturação
+      const yl = l - this.hpXl + 0.9985 * this.hpYl, yr = r - this.hpXr + 0.9985 * this.hpYr;
+      this.hpXl = l; this.hpXr = r; this.hpYl = yl; this.hpYr = yr;
+      l = yl > 0.98 ? 0.98 : yl < -0.98 ? -0.98 : yl; r = yr > 0.98 ? 0.98 : yr < -0.98 ? -0.98 : yr;
       if (this.audioLen < buf.length - 1) { buf[this.audioLen++] = l; buf[this.audioLen++] = r; }
     }
   }
@@ -2784,6 +2788,7 @@ class NDS {
     this.audioBuf = new Float32Array(16); this.audioLen = 0; this.audioRate = 32768;
     this.saveData = new Uint8Array(0); this.svAddrLen = 0; this.saveDirty = false; this.saveUsed = false;
     this.irCart = rom[0x0C] === 0x49; if (this.irCart) this.svAlloc(3, 0x80000);
+    this.skipDraw = false; this.dDma7 = 0;
     this.dPc = [[], []]; this.dPolys = 0; this.dSwaps = 0; this.dCard = 0; this.dSv = []; this.dSwi = [new Set(), new Set()]; this.dFrame = 0;
     this.buildFirmware();
     this.reset();
@@ -2804,7 +2809,7 @@ class NDS {
     return [`ARM9 ${cpu(0)}`, `ARM7 ${cpu(1)}`,
       `DISP A ${h(io[0][0])} B ${h(io[0][0x400])} POW ${h(io[0][0x304 >> 2], 4)} STAT ${h(this.dispstat[0], 4)}/${h(this.dispstat[1], 4)}`,
       `VRAM ${h(io[0][0x240 >> 2])} ${h(io[0][0x244 >> 2])} ${h(io[0][0x248 >> 2], 4)} CAP ${h(io[0][0x64 >> 2])}`,
-      `3D polis ${this.dPolys} trocas ${this.dSwaps} ctl ${h(io[0][0x60 >> 2], 4)} irq ${g.irq}`,
+      `3D polis ${this.dPolys} trocas ${this.dSwaps} dma3d ${this.dDma7} ctl ${h(io[0][0x60 >> 2], 4)} irq ${g.irq}`,
       `IPC sync ${this.ipcOut[0]}/${this.ipcOut[1]} fifo ${this.fifo[0].n}/${this.fifo[1].n} cnt ${h(this.fcnt[0], 4)}/${h(this.fcnt[1], 4)} err ${this.ferr[0]}/${this.ferr[1]}`,
       `CARD ctl ${h(this.romctrl)} cmd ${h(io[this.cardC][0x1A8 >> 2])} leituras ${this.dCard}`,
       `SAVE end ${this.svAddrLen} tam ${this.saveData.length} usado ${this.saveUsed ? 1 : 0} ir ${this.irCart ? 1 : 0} cmds ${this.dSv.map(x => h(x, 2)).join(' ')}`,
@@ -3217,12 +3222,14 @@ class NDS {
     if ((ctrl >>> 31) && !(old >>> 31)) {
       d.src = io[k] & 0x0FFFFFFE; d.dst = io[k + 1] & 0x0FFFFFFE;
       d.timing = c === 0 ? (ctrl >>> 27) & 7 : [0, 1, 5, 6][(ctrl >>> 28) & 3];
-      if (d.timing === 0) this.runDma(c, i); else if (d.timing === 5) this.cardDma();
+      if (d.timing === 0 || (c === 0 && d.timing === 7)) this.runDma(c, i); else if (d.timing === 5) this.cardDma();
     }
   }
-  dmaTrig(c, tm) { for (let i = 0; i < 4; i++) if ((this.io[c][((0xB0 + i * 12) >> 2) + 2] >>> 31) && this.dma[c][i].timing === tm) this.runDma(c, i); }
+  dmaTrig(c, tm) {
+    if (tm === 7) return; for (let i = 0; i < 4; i++) if ((this.io[c][((0xB0 + i * 12) >> 2) + 2] >>> 31) && this.dma[c][i].timing === tm) this.runDma(c, i); }
   runDma(c, i) {
     const io = this.io[c], k = (0xB0 + i * 12) >> 2, ctrl = io[k + 2], d = this.dma[c][i];
+    if (c === 0 && d.timing === 7) this.dDma7++;
     let count = c === 0 ? ctrl & 0x1FFFFF : ctrl & (i === 3 ? 0xFFFF : 0x3FFF); if (!count) count = c === 0 ? 0x200000 : (i === 3 ? 0x10000 : 0x4000);
     const word = ctrl & 0x04000000, dm = (ctrl >>> 21) & 3, sz = word ? 4 : 2;
     const ds = [1, -1, 0, 1][dm] * sz, ss = [1, -1, 0, 1][(ctrl >>> 23) & 3] * sz;
@@ -3247,12 +3254,13 @@ class NDS {
         if (line === 192) { this.dispstat[c] |= 1; if (ds & 8) this.raise(c, 1); this.dmaTrig(c, 1); }
         else if (line === 262) this.dispstat[c] &= ~1;
       }
-      if (line === 192) { const t = this.out; this.out = this.fb; this.fb = t; this.gxVblank(); if (this.capOn) { this.capOn = false; this.io[0][0x64 >> 2] &= 0x7FFFFFFF; } }
+      if (line === 192) { if (!this.skipDraw || this.capOn) { const t = this.out; this.out = this.fb; this.fb = t; } this.gxVblank(); if (this.capOn) { this.capOn = false; this.io[0][0x64 >> 2] &= 0x7FFFFFFF; } }
       else if (line === 0) this.capOn = (this.io[0][0x64 >> 2] >>> 31) !== 0;
       else if (line === 0) for (let e = 0; e < 2; e++) for (let i = 0; i < 2; i++) { const b = (e * 0x1000 + 0x28 + i * 0x10) >> 2; this.affX[e][i] = (this.io[0][b] << 4) >> 4; this.affY[e][i] = (this.io[0][b + 1] << 4) >> 4; }
+      if (this.g.irq) this.raise(0, 1 << 21);
       const t0 = this.lineStart;
       this.runTo(t0 + 1606);
-      if (line < 192) {
+      if (line < 192 && (!this.skipDraw || this.capOn)) {
         const swap = this.io[0][0x304 >> 2] & 0x8000;
         this.drawEngine(0, line, (swap ? line : line + 192) * 256); this.drawEngine(1, line, (swap ? line + 192 : line) * 256);
         this.dmaTrig(0, 2);
@@ -3757,7 +3765,7 @@ function nds3dInstall(N) {
     g.swap = false;
     const polys = g.polys; g.polys = []; g.nverts = 0;
     this.dPolys = polys.length; this.dSwaps++;
-    this.gxRender(polys);
+    if (!this.skipDraw || this.capOn) this.gxRender(polys);
   };
   P.gxTexture = function (tp, palBase) {
     const g = this.g, key = tp * 8192 + palBase; let tx = g.texCache.get(key);
@@ -3947,39 +3955,73 @@ async function unzip(u8) {
 }
 
 // ---------- Áudio ----------
-let actx = null, node = null;
-const RING = 16384; const ring = new Float32Array(RING * 2); let rw = 0, rr = 0;
+// Saída em AudioWorklet (fora da linha principal, não engasga quando o emulador pesa);
+// se o navegador não deixar, cai para ScriptProcessor com buffer maior.
+const WORKLET_SRC = `class P extends AudioWorkletProcessor {
+  constructor() { super(); this.q = []; this.off = 0; this.n = 0; this.primed = false; this.lL = 0; this.lR = 0; this.k = 0;
+    this.port.onmessage = (e) => { const d = e.data; if (d === 'clear') { this.q = []; this.off = 0; this.n = 0; this.primed = false; return; } this.q.push(d); this.n += d.length >> 1; }; }
+  process(_, outs) {
+    const L = outs[0][0], R = outs[0][1] || outs[0][0];
+    if (!this.primed && this.n >= 1600) this.primed = true;
+    for (let i = 0; i < L.length; i++) {
+      if (this.primed && this.n > 0) { const b = this.q[0]; this.lL = L[i] = b[this.off]; this.lR = R[i] = b[this.off + 1]; this.off += 2; this.n--; if (this.off >= b.length) { this.q.shift(); this.off = 0; } }
+      else { this.primed = false; this.lL *= 0.996; this.lR *= 0.996; L[i] = this.lL; R[i] = this.lR; }
+    }
+    while (this.n > 9600 && this.q.length > 1) { const b = this.q.shift(); this.n -= (b.length - this.off) >> 1; this.off = 0; }
+    if (++this.k >= 8) { this.k = 0; this.port.postMessage(this.n); }
+    return true;
+  }
+}
+registerProcessor('lep-out', P);`;
+let actx = null, node = null, wnode = null, queued = 0;
+const RING = 32768; const ring = new Float32Array(RING * 2); let rw = 0, rr = 0, primed = false, lastL = 0, lastR = 0;
 function ringCount() { return (rw - rr + RING) % RING; }
+function audioClear() { rw = rr = 0; primed = false; queued = 0; if (wnode) wnode.port.postMessage('clear'); }
+function useScriptProcessor() {
+  node = actx.createScriptProcessor(2048, 0, 2);
+  node.onaudioprocess = (e) => {
+    const L = e.outputBuffer.getChannelData(0), R = e.outputBuffer.getChannelData(1);
+    if (!primed && ringCount() >= 3000) primed = true;
+    for (let i = 0; i < L.length; i++) {
+      if (primed && rr !== rw) { lastL = L[i] = ring[rr * 2]; lastR = R[i] = ring[rr * 2 + 1]; rr = (rr + 1) % RING; }
+      else { primed = false; lastL *= 0.996; lastR *= 0.996; L[i] = lastL; R[i] = lastR; }
+    }
+  };
+  node.connect(actx.destination);
+}
 function initAudio() {
   if (actx) { if (actx.state !== 'running') actx.resume().catch(() => {}); return; }
   try {
     const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
-    actx = new AC();
-    node = actx.createScriptProcessor(1024, 0, 2);
-    node.onaudioprocess = (e) => {
-      const L = e.outputBuffer.getChannelData(0), R = e.outputBuffer.getChannelData(1);
-      for (let i = 0; i < L.length; i++) {
-        if (rr !== rw && soundOn && !paused) { L[i] = ring[rr * 2]; R[i] = ring[rr * 2 + 1]; rr = (rr + 1) % RING; }
-        else { L[i] = 0; R[i] = 0; }
-      }
-    };
-    node.connect(actx.destination);
+    actx = new AC({ latencyHint: 'playback' });
     if (gb) gb.setAudioRate(actx.sampleRate);
     actx.resume().catch(() => {});
+    if (actx.audioWorklet && typeof AudioWorkletNode !== 'undefined') {
+      const url = URL.createObjectURL(new Blob([WORKLET_SRC], { type: 'application/javascript' }));
+      actx.audioWorklet.addModule(url).then(() => {
+        wnode = new AudioWorkletNode(actx, 'lep-out', { numberOfInputs: 0, outputChannelCount: [2] });
+        wnode.port.onmessage = (e) => { queued = e.data; };
+        wnode.connect(actx.destination);
+      }).catch(() => { wnode = null; useScriptProcessor(); });
+    } else useScriptProcessor();
   } catch (e) { actx = null; }
 }
 let rsPos = 0;
 function pumpAudio() {
   const n = gb.audioLen >> 1, src = gb.audioBuf;
-  if (actx && soundOn && !turbo && n) {
-    const step = gb.audioRate / actx.sampleRate, limit = actx.sampleRate * 0.12; let pos = rsPos;
+  if (actx && (wnode || node) && soundOn && !turbo && !paused && n) {
+    const step = gb.audioRate / actx.sampleRate, limit = actx.sampleRate * 0.18;
+    const have = wnode ? queued : ringCount();
+    if (have > limit) { rsPos = 0; gb.audioLen = 0; return; } // evita atraso acumulado
+    const out = new Float32Array(Math.ceil((n - rsPos) / step + 2) * 2); let k = 0, pos = rsPos;
     while (pos < n) {
-      if (ringCount() > limit) { pos = n; break; } // evita atraso
       const i = pos | 0, f = pos - i, j = i + 1 < n ? i + 1 : i;
-      ring[rw * 2] = src[i * 2] + (src[j * 2] - src[i * 2]) * f; ring[rw * 2 + 1] = src[i * 2 + 1] + (src[j * 2 + 1] - src[i * 2 + 1]) * f;
-      rw = (rw + 1) % RING; pos += step;
+      out[k++] = src[i * 2] + (src[j * 2] - src[i * 2]) * f; out[k++] = src[i * 2 + 1] + (src[j * 2 + 1] - src[i * 2 + 1]) * f;
+      pos += step;
     }
     rsPos = pos - n;
+    if (wnode) { const chunk = out.subarray(0, k).slice(); queued += k >> 1; wnode.port.postMessage(chunk, [chunk.buffer]); }
+    else for (let i = 0; i < k; i += 2) { ring[rw * 2] = out[i]; ring[rw * 2 + 1] = out[i + 1]; rw = (rw + 1) % RING; }
   } else rsPos = 0;
   gb.audioLen = 0;
 }
@@ -4050,7 +4092,7 @@ async function startRom(u8, name, addToLib) {
     $('empty').style.display = 'none';
     $('led').classList.add('on');
     paused = false; updatePause();
-    rw = rr = 0;
+    audioClear();
     running = true;
     const big = u8.length > BIG_ROM, meta = { id: romId, name: name.replace(/\.(gbc?|cgb|gba|agb|nds|zip)$/i, ''), size: u8.length, sys: gb.sys, played: Date.now() };
     if (addToLib && !big) { const whole = u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength; if (!(await libPut(meta, whole ? u8.buffer : u8.slice().buffer))) bigNote = 'Sem espaço para guardar este jogo na biblioteca'; }
@@ -4077,7 +4119,7 @@ $('fileSav').onchange = async (e) => {
 
 // ---------- Loop principal ----------
 const FRAME_MS = 1000 * 70224 / 4194304;
-let last = performance.now(), acc = 0, msAvg = 0;
+let last = performance.now(), acc = 0, msAvg = 0, frameNo = 0, slow = false, emuFrames = 0, emuFps = 0, fpsT = performance.now();
 function loop(now) {
   requestAnimationFrame(loop);
   let dt = now - last; last = now;
@@ -4085,8 +4127,11 @@ function loop(now) {
   if (dt > 100) dt = FRAME_MS;
   acc += dt;
   let n = 0;
-  if (turbo) { for (let i = gb.sys === 'nds' ? 2 : gb.sys === 'gba' ? 3 : 4; i > 0; i--) { gb.runFrame(); pumpAudio(); } acc = 0; n = 1; }
-  else { const t0 = performance.now(); while (acc >= FRAME_MS && n < 3) { const tf = performance.now(); gb.runFrame(); msAvg += (performance.now() - tf - msAvg) * 0.05; pumpAudio(); acc -= FRAME_MS; n++; if (performance.now() - t0 > 11) { if (acc > FRAME_MS) acc = FRAME_MS * 0.5; break; } } }
+  const step = () => { const tf = performance.now(); frameNo++; gb.skipDraw = slow && (frameNo & 1) === 1; gb.runFrame(); const ms = performance.now() - tf; msAvg += (ms - msAvg) * 0.05; emuFrames++; pumpAudio(); };
+  if (turbo) { for (let i = gb.sys === 'nds' ? 2 : gb.sys === 'gba' ? 3 : 4; i > 0; i--) step(); acc = 0; n = 1; }
+  else { const t0 = performance.now(); while (acc >= FRAME_MS && n < 3) { step(); acc -= FRAME_MS; n++; if (performance.now() - t0 > 11) { if (acc > FRAME_MS) acc = FRAME_MS * 0.5; break; } } }
+  slow = gb.sys === 'nds' && msAvg > 14;
+  if (now - fpsT > 1000) { emuFps = emuFrames * 1000 / (now - fpsT); emuFrames = 0; fpsT = now; }
   if (acc > FRAME_MS * 3) acc = 0;
   if (n) { img32.set(gb.out); ctx2d.putImageData(img, 0, 0); }
 }
@@ -4180,7 +4225,7 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
 
 // ---------- Botões e menu ----------
-function setTurbo(v) { turbo = v; $('btnTurbo').classList.toggle('on', v); if (v) rw = rr = 0; }
+function setTurbo(v) { turbo = v; $('btnTurbo').classList.toggle('on', v); if (v) audioClear(); }
 $('btnTurbo').onclick = () => setTurbo(!turbo);
 function updatePause() { $('btnPause').textContent = paused ? '▶' : '❚❚'; $('btnPause').classList.toggle('on', paused); }
 $('btnPause').onclick = () => { if (!gb) return; paused = !paused; updatePause(); if (paused) persistSave(true); };
@@ -4194,7 +4239,7 @@ let diagTimer = 0;
 function showDiag() {
   if (!gb) return toast('Abra um jogo primeiro');
   closeSheet(); $('diag').style.display = 'block';
-  const upd = () => { $('diagTxt').textContent = 'LE Pocket diagnóstico · ' + gb.sys.toUpperCase() + ' · ' + gb.title + '\n' + msAvg.toFixed(1) + ' ms por quadro (ideal: abaixo de 16)' + (turbo ? ' · TURBO' : '') + (paused ? ' · PAUSADO' : '') + '\n\n' + (gb.diag ? gb.diag() : 'Sem detalhes para este console.'); };
+  const upd = () => { $('diagTxt').textContent = 'LE Pocket diagnóstico · ' + gb.sys.toUpperCase() + ' · ' + gb.title + '\n' + msAvg.toFixed(1) + ' ms por quadro (ideal: abaixo de 16) · velocidade ' + Math.round(emuFps / 59.7 * 100) + '%' + (slow ? ' · pulando quadros'  : '') + (turbo ? ' · TURBO' : '') + (paused ? ' · PAUSADO' : '') + '\n\n' + (gb.diag ? gb.diag() : 'Sem detalhes para este console.'); };
   upd(); clearInterval(diagTimer); diagTimer = setInterval(upd, 500);
 }
 $('mDiag').onclick = showDiag;
