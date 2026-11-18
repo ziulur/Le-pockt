@@ -3057,7 +3057,7 @@ class NDS {
     io[k] = nv;
     if (c === 0 && o >= 0x400 && o <= 0x600) {
       if (o === 0x600) { this.g.irq = (nv >>> 30) & 3; if (this.g.irq) this.raise(0, 1 << 21); }
-      else { io[k] = 0; if (m === 0xFFFFFFFF) this.gxPort(o, v | 0); }
+      else { io[k] = 0; if (m === 0xFFFFFFFF) this.gxPort(o < 0x440 ? 0x400 : o, v | 0); }
       return;
     }
     if (c === 0) {
