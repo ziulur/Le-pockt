@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#16141c">
+<title>LE Pocket — Emulador GB/GBC/GBA/DS</title>
+<!--PWAHEAD-->
+<style>
+  :root {
+    --bg: #16141c; --panel: #221f2b; --panel2: #2c2838; --line: #3a3549;
+    --text: #ece8f4; --muted: #9a93ab; --accent: #ff4f8b; --accent2: #49d6c4;
+    --btn: #3b3550; --btnHi: #4d4669;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Rounded", "Segoe UI", sans-serif;
+    overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  body { display: flex; flex-direction: column; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); overflow: hidden; }
+  header { display: flex; align-items: center; gap: 10px; padding: 10px 14px 6px; }
+  .logo { font-weight: 800; letter-spacing: .5px; font-size: 17px; }
+  .logo span { color: var(--accent); }
+  #gameTitle { flex: 1; color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .iconbtn { background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 12px; height: 38px; min-width: 38px; padding: 0 12px; font-size: 15px; font-weight: 600; }
+  .iconbtn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  #stage { padding: 4px 14px 0; display: flex; justify-content: center; }
+  .bezel { background: linear-gradient(180deg, #2b2737, #1d1a26); border-radius: 18px 18px 34px 18px; padding: 14px; width: 100%; max-width: 520px; box-shadow: 0 10px 30px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.06); position: relative; }
+  .led { position: absolute; left: 6px; top: 50%; width: 6px; height: 6px; border-radius: 50%; background: #444; }
+  .led.on { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  canvas { display: block; width: 100%; max-height: 52vh; margin: 0 auto; object-fit: contain; aspect-ratio: 10 / 9; image-rendering: pixelated; image-rendering: crisp-edges; background: #0d0c11; border-radius: 6px; }
+  #empty { position: absolute; inset: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 10px; padding: 18px; color: var(--muted); font-size: 14px; line-height: 1.4; }
+  #empty b { color: var(--text); font-size: 17px; }
+  .primary { background: var(--accent); color: #fff; border: 0; border-radius: 14px; padding: 12px 20px; font-size: 16px; font-weight: 700; }
+
+  #controls { flex: 1; position: relative; min-height: 250px; touch-action: none; }
+  .dpad { position: absolute; left: 22px; top: 50%; transform: translateY(-50%); width: 150px; height: 150px; }
+  .dpad div { position: absolute; background: var(--btn); box-shadow: 0 4px 0 #1a1722; }
+  .dpad .h { left: 0; top: 50px; width: 150px; height: 50px; border-radius: 10px; }
+  .dpad .v { left: 50px; top: 0; width: 50px; height: 150px; border-radius: 10px; }
+  .dpad .c { left: 50px; top: 50px; width: 50px; height: 50px; box-shadow: none; background: var(--btn); }
+  .dpad .c::after { content: ""; position: absolute; inset: 15px; border-radius: 50%; background: #2f2a40; }
+  .dpad .arrow { background: none; box-shadow: none; width: 0; height: 0; border: 9px solid transparent; }
+  .dpad .au { left: 66px; top: 12px; border-bottom-color: #6c6588; }
+  .dpad .ad { left: 66px; top: 120px; border-top-color: #6c6588; }
+  .dpad .al { left: 12px; top: 66px; border-right-color: #6c6588; }
+  .dpad .ar { left: 120px; top: 66px; border-left-color: #6c6588; }
+  .dpad.p-up .au { border-bottom-color: var(--accent); } .dpad.p-down .ad { border-top-color: var(--accent); }
+  .dpad.p-left .al { border-right-color: var(--accent); } .dpad.p-right .ar { border-left-color: var(--accent); }
+  .ab { position: absolute; right: 18px; top: 50%; transform: translateY(-50%) rotate(-22deg); width: 160px; height: 90px; }
+  .btn { position: absolute; width: 68px; height: 68px; border-radius: 50%; background: var(--accent); box-shadow: 0 5px 0 #9c2350; color: #fff; font-weight: 800; font-size: 20px; display: flex; align-items: center; justify-content: center; }
+  .btn.b { left: 0; top: 16px; } .btn.a { right: 0; top: 0; }
+  .btn.sm { width: 50px; height: 50px; font-size: 16px; display: none; background: #7a6cf0; box-shadow: 0 4px 0 #463c9c; }
+  .btn.y { left: 14px; top: -44px; } .btn.x { right: 14px; top: -60px; }
+  body.nds .btn.sm { display: flex; }
+  body.nds canvas { touch-action: none; }
+  @media (orientation: portrait) {
+    body.nds header { padding: 4px 12px 2px; }
+    body.nds #stage { padding: 2px 6px 0; }
+    body.nds .bezel { padding: 4px; border-radius: 10px; max-width: none; }
+    body.nds .led { display: none; }
+    body.nds canvas { width: auto; max-width: 100%; height: calc(100vh - 250px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); height: calc(100dvh - 250px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); max-height: none; }
+    body.nds #controls { min-height: 196px; }
+    body.nds .dpad { left: 10px; top: 54%; transform: translateY(-50%) scale(0.8); transform-origin: left center; }
+    body.nds .ab { right: 4px; top: 58%; transform: translateY(-50%) rotate(-22deg) scale(0.8); transform-origin: right center; }
+    body.nds .btn.x { top: -50px; right: 26px; } body.nds .btn.y { top: -40px; left: 22px; }
+    body.nds .shoulder { top: 2px; height: 30px; width: 70px; }
+    body.nds .turbo { top: 2px; height: 30px; font-size: 13px; }
+    body.nds .ss { bottom: 6px; }
+  }
+  .btn.pressed { transform: translateY(4px); box-shadow: 0 1px 0 #9c2350; }
+  .btn span { transform: rotate(22deg); }
+  .ss { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); display: flex; gap: 22px; }
+  .pill { width: 70px; height: 24px; border-radius: 12px; background: var(--btn); box-shadow: 0 3px 0 #1a1722; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 1px; display: flex; align-items: center; justify-content: center; }
+  .pill.pressed { background: var(--btnHi); transform: translateY(2px); box-shadow: none; }
+  .turbo { position: absolute; left: 50%; transform: translateX(-50%); top: 8px; white-space: nowrap; }
+  .shoulder { position: absolute; top: 8px; width: 84px; height: 38px; background: var(--btn); box-shadow: 0 4px 0 #1a1722; color: var(--muted); font-weight: 800; font-size: 15px; display: none; align-items: center; justify-content: center; }
+  .shoulder.sl { left: 18px; border-radius: 18px 8px 8px 8px; } .shoulder.sr { right: 18px; border-radius: 8px 18px 8px 8px; }
+  .shoulder.pressed { background: var(--btnHi); transform: translateY(3px); box-shadow: none; color: var(--text); }
+  body.gba .shoulder { display: flex; }
+  .turbo.on { color: var(--accent2); }
+
+  /* paisagem */
+  @media (orientation: landscape) and (max-height: 540px) {
+    header { position: absolute; top: env(safe-area-inset-top); left: 0; right: 0; z-index: 3; padding: 6px 10px; pointer-events: none; }
+    header > * { pointer-events: auto; }
+    #gameTitle, .logo { display: none; }
+    header { justify-content: flex-end; }
+    #stage { position: absolute; inset: 0; align-items: center; padding: 0; }
+    .bezel { width: auto; height: auto; max-width: none; padding: 10px; border-radius: 14px; }
+    .bezel canvas { height: auto; max-height: none; width: min(calc(100vw - 350px), calc((100vh - 40px) * var(--ar, 1.111))); }
+    #controls { position: absolute; inset: 0; min-height: 0; }
+    .dpad { left: 14px; } .ab { right: 4px; }
+    .ss { left: auto; right: 34px; bottom: 14px; transform: none; gap: 10px; flex-direction: row; }
+    .ss .pill { width: 56px; }
+    .turbo { right: auto; left: 30px; top: auto; bottom: 14px; transform: none; }
+    .shoulder.sl { left: 14px; top: 14px; } .shoulder.sr { right: 14px; top: 62px; }
+    .led { display: none; }
+  }
+
+  /* menu */
+  #sheet { position: fixed; inset: 0; background: rgba(8,7,12,.6); display: none; z-index: 10; align-items: flex-end; justify-content: center; }
+  #sheet.open { display: flex; }
+  .sheetBody { background: var(--panel); width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto; border-radius: 22px 22px 0 0; padding: 16px 16px calc(18px + env(safe-area-inset-bottom)); -webkit-overflow-scrolling: touch; }
+  .sheetBody h3 { margin: 4px 2px 10px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+  .grid button, .row button { background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 14px; padding: 13px 10px; font-size: 14px; font-weight: 600; text-align: left; }
+  .grid button small { display: block; color: var(--muted); font-weight: 500; font-size: 11px; margin-top: 2px; }
+  .grid button.wide { grid-column: span 2; }
+  .grid button:active, .row button:active { background: var(--btnHi); }
+  #lib { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+  .rom { display: flex; align-items: center; gap: 10px; background: var(--panel2); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; }
+  .rom .n { flex: 1; min-width: 0; }
+  .rom .n div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: 14px; }
+  .rom .n small { color: var(--muted); font-size: 11px; }
+  .rom .tag { font-size: 10px; font-weight: 800; padding: 3px 6px; border-radius: 6px; background: #3a3355; color: var(--accent2); }
+  .rom button { background: none; border: 0; color: var(--muted); font-size: 18px; padding: 4px 6px; }
+  .note { color: var(--muted); font-size: 12px; line-height: 1.45; margin: 4px 2px 0; }
+  .seg { display: flex; gap: 6px; margin-bottom: 16px; }
+  .seg button { flex: 1; background: var(--panel2); border: 1px solid var(--line); color: var(--text); border-radius: 12px; padding: 10px 4px; font-size: 13px; font-weight: 600; }
+  .seg button.sel { border-color: var(--accent); color: var(--accent); }
+  #toast { max-width: 92vw; white-space: normal !important; text-align: center; position: fixed; left: 50%; top: calc(14px + env(safe-area-inset-top)); transform: translateX(-50%) translateY(-80px); background: var(--panel2); border: 1px solid var(--line); padding: 10px 16px; border-radius: 14px; font-size: 14px; font-weight: 600; transition: transform .25s; z-index: 20; white-space: nowrap; }
+  #toast.show { transform: translateX(-50%) translateY(0); }
+  input[type=file] { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">LE<span>Pocket</span></div>
+  <div id="gameTitle">Nenhum jogo carregado</div>
+  <button class="iconbtn" id="btnPause" aria-label="Pausar">❚❚</button>
+  <button class="iconbtn" id="btnMenu" aria-label="Menu">☰</button>
+</header>
+
+<div id="stage">
+  <div class="bezel">
+    <div class="led" id="led"></div>
+    <canvas id="screen" width="160" height="144"></canvas>
+    <div id="empty">
+      <b>Coloque um jogo</b>
+      <div>Abra um arquivo <b style="font-size:14px">.gb</b>, <b style="font-size:14px">.gbc</b>, <b style="font-size:14px">.gba</b>, <b style="font-size:14px">.nds</b> ou <b style="font-size:14px">.zip</b> guardado no aparelho.</div>
+      <button class="primary" id="btnOpenEmpty">Abrir jogo</button>
+    </div>
+  </div>
+</div>
+
+<div id="controls">
+  <div class="dpad" id="dpad">
+    <div class="h"></div><div class="v"></div><div class="c"></div>
+    <div class="arrow au"></div><div class="arrow ad"></div><div class="arrow al"></div><div class="arrow ar"></div>
+  </div>
+  <div class="ab">
+    <div class="btn b" data-key="5"><span>B</span></div>
+    <div class="btn a" data-key="4"><span>A</span></div>
+    <div class="btn sm y" data-key="11"><span>Y</span></div>
+    <div class="btn sm x" data-key="10"><span>X</span></div>
+  </div>
+  <div class="ss">
+    <div class="pill" data-key="6">SELECT</div>
+    <div class="pill" data-key="7">START</div>
+  </div>
+  <div class="shoulder sl" data-key="9">L</div>
+  <div class="shoulder sr" data-key="8">R</div>
+  <button class="iconbtn turbo" id="btnTurbo">⏩ Turbo</button>
+</div>
+
+<div id="sheet">
+  <div class="sheetBody">
+    <h3>Jogo</h3>
+    <div class="grid">
+      <button class="wide" id="mOpen">📂 Abrir jogo<small>.gb · .gbc · .gba · .nds · .zip — o jogo fica salvo na biblioteca</small></button>
+      <button id="mSaveState">💾 Salvar estado<small>Guarda o momento exato</small></button>
+      <button id="mLoadState">⏪ Carregar estado<small>Volta ao momento salvo</small></button>
+      <button id="mReset">🔄 Reiniciar</button>
+      <button id="mSound">🔊 Som: ligado</button>
+      <button class="wide" id="mDiag">🩺 Diagnóstico<small>Mostra onde o jogo parou — mande um print disso</small></button>
+    </div>
+    <div id="installBox" style="display:none">
+      <h3>Aplicativo</h3>
+      <div class="grid"><button class="wide" id="mInstall">📲 Instalar o LE Pocket<small id="installHint">Coloca o ícone na tela inicial e funciona sem internet</small></button></div>
+    </div>
+    <h3>Biblioteca</h3>
+    <div id="lib"></div>
+    <h3>Cores (jogos de Game Boy clássico)</h3>
+    <div class="seg" id="palSeg">
+      <button data-pal="verde">Verde</button>
+      <button data-pal="pocket">Cinza</button>
+      <button data-pal="ambar">Âmbar</button>
+      <button data-pal="noite">Noite</button>
+    </div>
+    <h3>Save do cartucho</h3>
+    <div class="grid">
+      <button id="mExport">⬇️ Exportar .sav<small>Backup no app Arquivos</small></button>
+      <button id="mImport">⬆️ Importar .sav<small>De outro emulador</small></button>
+    </div>
+    <p class="note">O progresso salvo dentro do jogo é guardado automaticamente neste aparelho (e na sua conta, quando você usa o emulador pelo link do Claude). Mesmo assim, um backup com “Exportar .sav” de vez em quando não faz mal.<br><br>
+    Se não sair som, confira se a chave de silencioso do iPhone está desligada. Jogos não vêm incluídos: use cópias suas ou jogos homebrew gratuitos.</p>
+    <div class="row" style="margin-top:14px"><button id="mClose" style="width:100%;text-align:center">Fechar</button></div>
+  </div>
+</div>
+<div id="diag" style="display:none;position:fixed;inset:0;z-index:30;background:#0d0c11;color:#d8f5e6;padding:calc(12px + env(safe-area-inset-top)) 10px 10px;overflow:auto"><pre id="diagTxt" style="margin:0;font:11px/1.45 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all;-webkit-user-select:text;user-select:text"></pre><button class="primary" id="diagClose" style="margin-top:12px;width:100%">Fechar</button></div>
+<div id="toast"></div>
+<input type="file" id="fileRom">
+<input type="file" id="fileSav">
+
+<script>
+/*CORE*/
+</script>
+<script>
+'use strict';
+(() => {
+const $ = (id) => document.getElementById(id);
+const canvas = $('screen'), ctx2d = canvas.getContext('2d');
+let img = ctx2d.createImageData(160, 144);
+let img32 = new Uint32Array(img.data.buffer);
+const PALETTES = {
+  verde:  [0xFFD0F8E0, 0xFF70C088, 0xFF566834, 0xFF201808],
+  pocket: [0xFFE8E8E8, 0xFFA0A0A0, 0xFF585858, 0xFF181818],
+  ambar:  [0xFF9FE6FF, 0xFF2FA8F0, 0xFF1A5C9A, 0xFF101C30],
+  noite:  [0xFFF4D8C4, 0xFFB08A6C, 0xFF6A4038, 0xFF2A1420],
+};
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
+};
+let gb = null, romId = null, running = false, paused = false, turbo = false, soundOn = store.get('lep:sound') !== '0';
+let palName = store.get('lep:pal') || 'verde'; if (!PALETTES[palName]) palName = 'verde';
+
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 1800); }
+
+// ---------- base64 ----------
+function toB64(u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
+function fromB64(s) { const b = atob(s), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+function hashRom(u8) { let h = 0x811c9dc5; for (let i = 0; i < u8.length; i += 7) { h ^= u8[i]; h = Math.imul(h, 16777619) >>> 0; } return h.toString(16); }
+
+// ---------- Biblioteca (IndexedDB) ----------
+let dbp = null;
+function db() {
+  if (dbp) return dbp;
+  dbp = new Promise((res, rej) => {
+    try {
+      const r = indexedDB.open('lepocket', 3);
+      r.onupgradeneeded = (e) => { const d = r.result; if (e.oldVersion < 3 && d.objectStoreNames.contains('roms')) d.deleteObjectStore('roms'); if (!d.objectStoreNames.contains('roms')) d.createObjectStore('roms', { keyPath: 'id' }); if (!d.objectStoreNames.contains('data')) d.createObjectStore('data'); if (!d.objectStoreNames.contains('states')) d.createObjectStore('states'); };
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    } catch (e) { rej(e); }
+  });
+  return dbp;
+}
+async function libPut(rec, data) { try { const d = await db(); await new Promise((res, rej) => { const tx = d.transaction(['roms', 'data'], 'readwrite'); tx.objectStore('roms').put(rec); if (data) tx.objectStore('data').put(data, rec.id); tx.oncomplete = res; tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error); }); return true; } catch (e) { return false; } }
+async function libData(id) { try { const d = await db(); return await new Promise((res) => { const r = d.transaction('data').objectStore('data').get(id); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); }); } catch (e) { return null; } }
+async function libAll() { try { const d = await db(); return await new Promise((res, rej) => { const r = d.transaction('roms').objectStore('roms').getAll(); r.onsuccess = () => res(r.result || []); r.onerror = () => rej(r.error); }); } catch (e) { return []; } }
+async function libDel(id) { try { const d = await db(); await new Promise((res) => { const tx = d.transaction(['roms', 'data'], 'readwrite'); tx.objectStore('roms').delete(id); tx.objectStore('data').delete(id); tx.oncomplete = res; tx.onerror = res; }); } catch (e) {} }
+async function statePut(id, s) { const d = await db(); await new Promise((res, rej) => { const tx = d.transaction('states', 'readwrite'); tx.objectStore('states').put(s, id); tx.oncomplete = res; tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error); }); }
+async function stateGet(id) { try { const d = await db(); return await new Promise((res) => { const r = d.transaction('states').objectStore('states').get(id); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); }); } catch (e) { return null; } }
+async function renderLib() {
+  const el = $('lib'); const all = (await libAll()).sort((a, b) => (b.played || 0) - (a.played || 0));
+  el.innerHTML = '';
+  if (!all.length) { el.innerHTML = '<p class="note">Os jogos que você abrir aparecem aqui para jogar de novo com um toque.</p>'; return; }
+  for (const r of all) {
+    const row = document.createElement('div'); row.className = 'rom';
+    row.innerHTML = `<span class="tag">${(r.sys || (r.cgb ? 'gbc' : 'gb')).toUpperCase()}</span><div class="n"><div></div><small>${(r.size / 1024) | 0} KB</small></div><button aria-label="Remover">✕</button>`;
+    row.querySelector('.n div').textContent = r.name;
+    row.querySelector('.n').onclick = row.querySelector('.tag').onclick = async () => { closeSheet(); const d = await libData(r.id); if (!d) return toast('Não achei esse jogo guardado — abra o arquivo de novo'); startRom(new Uint8Array(d), r.name, false); };
+    const del = row.querySelector('button');
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      if (del.dataset.arm) { await libDel(r.id); renderLib(); }
+      else { del.dataset.arm = '1'; del.textContent = 'Remover?'; del.style.color = 'var(--accent)'; del.style.fontSize = '13px'; setTimeout(() => { if (del.isConnected) { delete del.dataset.arm; del.textContent = '✕'; del.style.color = ''; del.style.fontSize = ''; } }, 3000); }
+    };
+    el.appendChild(row);
+  }
+}
+
+// ---------- ZIP ----------
+async function unzip(u8) {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= Math.max(0, u8.length - 70000); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error('zip inválido');
+  const count = dv.getUint16(eocd + 10, true); let p = dv.getUint32(eocd + 16, true);
+  for (let n = 0; n < count; n++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
+    const nl = dv.getUint16(p + 28, true), xl = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lo = dv.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nl));
+    p += 46 + nl + xl + cl;
+    if (!/\.(gbc?|cgb|gba|agb|nds)$/i.test(name)) continue;
+    const start = lo + 30 + dv.getUint16(lo + 26, true) + dv.getUint16(lo + 28, true);
+    const data = u8.subarray(start, start + csize);
+    if (method === 0) return { name, data: data.slice() };
+    if (method === 8) {
+      if (typeof DecompressionStream === 'undefined') throw new Error('Atualize o iOS para abrir .zip');
+      const ds = new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw')));
+      return { name, data: new Uint8Array(await ds.arrayBuffer()) };
+    }
+  }
+  throw new Error('Nenhum jogo .gb/.gbc/.gba/.nds dentro do zip');
+}
+
+// ---------- Áudio ----------
+// Saída em AudioWorklet (fora da linha principal, não engasga quando o emulador pesa);
+// se o navegador não deixar, cai para ScriptProcessor com buffer maior.
+const WORKLET_SRC = `class P extends AudioWorkletProcessor {
+  constructor() { super(); this.q = []; this.off = 0; this.n = 0; this.primed = false; this.lL = 0; this.lR = 0; this.k = 0;
+    this.port.onmessage = (e) => { const d = e.data; if (d === 'clear') { this.q = []; this.off = 0; this.n = 0; this.primed = false; return; } this.q.push(d); this.n += d.length >> 1; }; }
+  process(_, outs) {
+    const L = outs[0][0], R = outs[0][1] || outs[0][0];
+    if (!this.primed && this.n >= 1600) this.primed = true;
+    for (let i = 0; i < L.length; i++) {
+      if (this.primed && this.n > 0) { const b = this.q[0]; this.lL = L[i] = b[this.off]; this.lR = R[i] = b[this.off + 1]; this.off += 2; this.n--; if (this.off >= b.length) { this.q.shift(); this.off = 0; } }
+      else { this.primed = false; this.lL *= 0.996; this.lR *= 0.996; L[i] = this.lL; R[i] = this.lR; }
+    }
+    while (this.n > 9600 && this.q.length > 1) { const b = this.q.shift(); this.n -= (b.length - this.off) >> 1; this.off = 0; }
+    if (++this.k >= 8) { this.k = 0; this.port.postMessage(this.n); }
+    return true;
+  }
+}
+registerProcessor('lep-out', P);`;
+let actx = null, node = null, wnode = null, queued = 0;
+const RING = 32768; const ring = new Float32Array(RING * 2); let rw = 0, rr = 0, primed = false, lastL = 0, lastR = 0;
+function ringCount() { return (rw - rr + RING) % RING; }
+function audioClear() { rw = rr = 0; primed = false; queued = 0; if (wnode) wnode.port.postMessage('clear'); }
+function useScriptProcessor() {
+  node = actx.createScriptProcessor(2048, 0, 2);
+  node.onaudioprocess = (e) => {
+    const L = e.outputBuffer.getChannelData(0), R = e.outputBuffer.getChannelData(1);
+    if (!primed && ringCount() >= 3000) primed = true;
+    for (let i = 0; i < L.length; i++) {
+      if (primed && rr !== rw) { lastL = L[i] = ring[rr * 2]; lastR = R[i] = ring[rr * 2 + 1]; rr = (rr + 1) % RING; }
+      else { primed = false; lastL *= 0.996; lastR *= 0.996; L[i] = lastL; R[i] = lastR; }
+    }
+  };
+  node.connect(actx.destination);
+}
+function initAudio() {
+  if (actx) { if (actx.state !== 'running') actx.resume().catch(() => {}); return; }
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    actx = new AC({ latencyHint: 'playback' });
+    if (gb) gb.setAudioRate(actx.sampleRate);
+    actx.resume().catch(() => {});
+    if (actx.audioWorklet && typeof AudioWorkletNode !== 'undefined') {
+      const url = URL.createObjectURL(new Blob([WORKLET_SRC], { type: 'application/javascript' }));
+      actx.audioWorklet.addModule(url).then(() => {
+        wnode = new AudioWorkletNode(actx, 'lep-out', { numberOfInputs: 0, outputChannelCount: [2] });
+        wnode.port.onmessage = (e) => { queued = e.data; };
+        wnode.connect(actx.destination);
+      }).catch(() => { wnode = null; useScriptProcessor(); });
+    } else useScriptProcessor();
+  } catch (e) { actx = null; }
+}
+let rsPos = 0;
+function pumpAudio() {
+  const n = gb.audioLen >> 1, src = gb.audioBuf;
+  if (actx && (wnode || node) && soundOn && !turbo && !paused && n) {
+    const step = gb.audioRate / actx.sampleRate, limit = actx.sampleRate * 0.18;
+    const have = wnode ? queued : ringCount();
+    if (have > limit) { rsPos = 0; gb.audioLen = 0; return; } // evita atraso acumulado
+    const out = new Float32Array(Math.ceil((n - rsPos) / step + 2) * 2); let k = 0, pos = rsPos;
+    while (pos < n) {
+      const i = pos | 0, f = pos - i, j = i + 1 < n ? i + 1 : i;
+      out[k++] = src[i * 2] + (src[j * 2] - src[i * 2]) * f; out[k++] = src[i * 2 + 1] + (src[j * 2 + 1] - src[i * 2 + 1]) * f;
+      pos += step;
+    }
+    rsPos = pos - n;
+    if (wnode) { const chunk = out.subarray(0, k).slice(); queued += k >> 1; wnode.port.postMessage(chunk, [chunk.buffer]); }
+    else for (let i = 0; i < k; i += 2) { ring[rw * 2] = out[i]; ring[rw * 2 + 1] = out[i + 1]; rw = (rw + 1) % RING; }
+  } else rsPos = 0;
+  gb.audioLen = 0;
+}
+['touchstart', 'mousedown', 'keydown'].forEach(ev => document.addEventListener(ev, initAudio, { passive: true }));
+
+// ---------- Nuvem (backup do save) e downloads ----------
+let cdb = null, uid = null, dl = null; const cloudLast = {};
+(async () => {
+  try {
+    if (typeof claude === 'undefined' || !claude.use) return;
+    const [d, u, w] = await Promise.all([claude.use('db'), claude.use('user'), claude.use('downloads')]);
+    dl = w || null;
+    if (d && u) { const id = await u.id(); if (id) { uid = String(id); cdb = d; } }
+  } catch (e) {}
+})();
+const cloudDoc = () => cdb.collection('data/users/' + uid).doc('sav_' + romId.slice(0, 150));
+async function cloudPush(b64, force) {
+  if (!cdb || !romId) return;
+  const now = Date.now();
+  if (!force && now - (cloudLast[romId] || 0) < 20000) return;
+  cloudLast[romId] = now;
+  try { await cloudDoc().set({ d: b64, t: now }); } catch (e) {}
+}
+async function cloudPull() {
+  if (!cdb || !romId) return null;
+  try { const s = await Promise.race([cloudDoc().get(), new Promise(r => setTimeout(() => r(null), 8000))]); return s && s.exists ? s.data().d : null; } catch (e) { return null; }
+}
+
+// ---------- Saves ----------
+const savKey = () => 'lep:sav:' + romId, stKey = () => 'lep:state:' + romId;
+function persistSave(force) {
+  if (!gb || !gb.hasSave) return;
+  if (!force && !gb.saveDirty) return;
+  const d = gb.getSave(); if (!d) return;
+  gb.saveDirty = false;
+  const b = toB64(d);
+  if (!store.set(savKey(), b) && !cdb) toast('Sem espaço para salvar — exporte o .sav');
+  cloudPush(b, force);
+}
+setInterval(() => persistSave(false), 3000);
+document.addEventListener('visibilitychange', () => { if (document.hidden) persistSave(true); });
+window.addEventListener('pagehide', () => persistSave(true));
+
+// ---------- Iniciar jogo ----------
+const BIG_ROM = 80 * 1024 * 1024;
+async function startRom(u8, name, addToLib) {
+  let bigNote = '';
+  try {
+    if (u8.length < 0x150) throw new Error('Arquivo pequeno demais');
+    if (gb) persistSave(true);
+    if (u8[0] === 0x37 && u8[1] === 0x7A && u8[2] === 0xBC && u8[3] === 0xAF) throw new Error('Arquivo .7z: extraia o jogo antes de abrir');
+    if (u8[0] === 0x52 && u8[1] === 0x61 && u8[2] === 0x72 && u8[3] === 0x21) throw new Error('Arquivo .rar: extraia o jogo antes de abrir');
+    const isNds = /\.nds$/i.test(name) || (u8.length > 0x200 && u8[0x15C] === 0x56 && u8[0x15D] === 0xCF);
+    const isGba = !isNds && /\.(gba|agb)$/i.test(name) || (!/\.(gbc?|cgb)$/i.test(name) && u8.length >= 0xC0 && u8[0xB2] === 0x96 && u8[0x104] !== 0xCE);
+    if (!isNds && !isGba) { let x = 0; for (let i = 0x134; i <= 0x14C; i++) x = (x - u8[i] - 1) & 0xFF; if (x !== u8[0x14D]) throw new Error('Arquivo não reconhecido como jogo'); }
+    gb = isNds ? new NDS(u8) : isGba ? new GBA(u8) : new GB(u8, { sampleRate: actx ? actx.sampleRate : 44100, shades: PALETTES[palName] });
+    canvas.width = gb.width; canvas.height = gb.height; canvas.style.aspectRatio = gb.width + ' / ' + gb.height; canvas.style.setProperty('--ar', String(gb.width / gb.height));
+    img = ctx2d.createImageData(gb.width, gb.height); img32 = new Uint32Array(img.data.buffer);
+    document.body.classList.toggle('gba', isGba || isNds); document.body.classList.toggle('nds', isNds);
+    touchKeys = 0; keyKeys = 0; applied = 0; rsPos = 0;
+    romId = gb.title.replace(/\W/g, '_') + '_' + hashRom(u8);
+    const sav = store.get(savKey());
+    if (sav) { try { gb.loadSave(fromB64(sav)); } catch (e) {} }
+    else if (gb.hasSave) {
+      const myGb = gb; cloudPull().then(c => { if (c && gb === myGb) { try { gb.loadSave(fromB64(c)); store.set(savKey(), c); gb.reset(); toast('Save recuperado da nuvem ✓'); } catch (e) {} } });
+    }
+    $('gameTitle').textContent = name.replace(/\.(gbc?|cgb|gba|agb|nds|zip)$/i, '');
+    $('empty').style.display = 'none';
+    $('led').classList.add('on');
+    paused = false; updatePause();
+    audioClear();
+    running = true;
+    const big = u8.length > BIG_ROM, meta = { id: romId, name: name.replace(/\.(gbc?|cgb|gba|agb|nds|zip)$/i, ''), size: u8.length, sys: gb.sys, played: Date.now() };
+    if (addToLib && !big) { const whole = u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength; if (!(await libPut(meta, whole ? u8.buffer : u8.slice().buffer))) bigNote = 'Sem espaço para guardar este jogo na biblioteca'; }
+    else if (!addToLib) libPut(meta);
+    else bigNote = 'Jogo grande: não fica na biblioteca, abra o arquivo de novo da próxima vez';
+    if (!big) store.set('lep:last', romId); else store.set('lep:last', '');
+    toast(({ gb: 'Game Boy', gbc: 'Game Boy Color', gba: 'Game Boy Advance', nds: 'Nintendo DS (etapa 1)' })[gb.sys] + ' · ' + gb.title);
+    if (bigNote) setTimeout(() => toast(bigNote), 2200);
+  } catch (e) { toast(e.message); }
+}
+async function openFile(file) {
+  let u8 = new Uint8Array(await file.arrayBuffer()); let name = file.name;
+  try {
+    if (/\.zip$/i.test(name) || (u8[0] === 0x50 && u8[1] === 0x4B)) { const z = await unzip(u8); u8 = z.data; name = z.name.split('/').pop(); }
+  } catch (e) { toast(e.message); return; }
+  startRom(u8, name, true);
+}
+$('fileRom').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) { closeSheet(); openFile(f); } };
+$('fileSav').onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f || !gb) return;
+  const d = new Uint8Array(await f.arrayBuffer());
+  gb.loadSave(d); gb.saveDirty = true; persistSave(true); gb.reset(); toast('Save importado — jogo reiniciado'); closeSheet();
+};
+
+// ---------- Loop principal ----------
+const FRAME_MS = 1000 * 70224 / 4194304;
+let last = performance.now(), acc = 0, msAvg = 0, frameNo = 0, slow = false, emuFrames = 0, emuFps = 0, fpsT = performance.now();
+function loop(now) {
+  requestAnimationFrame(loop);
+  let dt = now - last; last = now;
+  if (!gb || !running || paused) return;
+  if (dt > 100) dt = FRAME_MS;
+  acc += dt;
+  let n = 0;
+  const step = () => { const tf = performance.now(); frameNo++; gb.skipDraw = slow && (frameNo & 1) === 1; gb.runFrame(); const ms = performance.now() - tf; msAvg += (ms - msAvg) * 0.05; emuFrames++; pumpAudio(); };
+  if (turbo) { for (let i = gb.sys === 'nds' ? 2 : gb.sys === 'gba' ? 3 : 4; i > 0; i--) step(); acc = 0; n = 1; }
+  else { const t0 = performance.now(); while (acc >= FRAME_MS && n < 3) { step(); acc -= FRAME_MS; n++; if (performance.now() - t0 > 11) { if (acc > FRAME_MS) acc = FRAME_MS * 0.5; break; } } }
+  slow = gb.sys === 'nds' && msAvg > 14;
+  if (now - fpsT > 1000) { emuFps = emuFrames * 1000 / (now - fpsT); emuFrames = 0; fpsT = now; }
+  if (acc > FRAME_MS * 3) acc = 0;
+  if (n) { img32.set(gb.out); ctx2d.putImageData(img, 0, 0); }
+}
+requestAnimationFrame(loop);
+
+// ---------- Controles ----------
+const DIR = { right: 0, left: 1, up: 2, down: 3 };
+let touchKeys = 0, keyKeys = 0, applied = 0;
+function applyKeys() {
+  const k = touchKeys | keyKeys;
+  if (gb) for (let i = 0; i < 12; i++) { const m = 1 << i; if ((k & m) !== (applied & m)) gb.press(i, !!(k & m)); }
+  applied = k;
+  const dp = $('dpad');
+  dp.classList.toggle('p-right', !!(k & 1)); dp.classList.toggle('p-left', !!(k & 2));
+  dp.classList.toggle('p-up', !!(k & 4)); dp.classList.toggle('p-down', !!(k & 8));
+  document.querySelectorAll('[data-key]').forEach(el => el.classList.toggle('pressed', !!(k & (1 << +el.dataset.key))));
+}
+function keysFromTouches(touches) {
+  let k = 0;
+  const dr = $('dpad').getBoundingClientRect();
+  const cx = dr.left + dr.width / 2, cy = dr.top + dr.height / 2, rad = dr.width / 2;
+  const btns = [...document.querySelectorAll('#controls [data-key]')].map(el => ({ k: +el.dataset.key, r: el.getBoundingClientRect() })).filter(b => b.r.width > 0);
+  for (const t of touches) {
+    const x = t.clientX, y = t.clientY;
+    const dx = x - cx, dy = y - cy;
+    if (Math.abs(dx) < rad + 30 && Math.abs(dy) < rad + 30) {
+      if (Math.hypot(dx, dy) < rad * 0.18) continue;
+      const th = rad * 0.28;
+      if (dx > th && Math.abs(dy) < dx * 2.2) k |= 1;
+      if (dx < -th && Math.abs(dy) < -dx * 2.2) k |= 2;
+      if (dy < -th && Math.abs(dx) < -dy * 2.2) k |= 4;
+      if (dy > th && Math.abs(dx) < dy * 2.2) k |= 8;
+      continue;
+    }
+    // botões: o mais próximo dentro de uma margem
+    let best = null, bd = 1e9;
+    for (const b of btns) {
+      const bx = b.r.left + b.r.width / 2, by = b.r.top + b.r.height / 2;
+      const d = Math.hypot(x - bx, y - by);
+      const reach = Math.max(b.r.width, b.r.height) / 2 + 16;
+      if (d < reach && d < bd) { bd = d; best = b; }
+    }
+    if (best) {
+      k |= 1 << best.k;
+      // entre A e B: aperta os dois
+      if (best.k === 4 || best.k === 5) {
+        const other = btns.find(b => b.k === (best.k === 4 ? 5 : 4));
+        if (other) { const ox = other.r.left + other.r.width / 2, oy = other.r.top + other.r.height / 2; if (Math.hypot(x - ox, y - oy) < other.r.width * 0.75) k |= 1 << other.k; }
+      }
+    }
+  }
+  return k;
+}
+const ctrl = $('controls');
+const onTouch = (e) => {
+  if (e.target.closest('button')) return;
+  e.preventDefault();
+  touchKeys = keysFromTouches(e.touches); applyKeys();
+};
+['touchstart', 'touchmove', 'touchend', 'touchcancel'].forEach(ev => ctrl.addEventListener(ev, onTouch, { passive: false }));
+// mouse (computador)
+let mouseDown = false;
+ctrl.addEventListener('mousedown', (e) => { if (e.target.closest('button')) return; mouseDown = true; touchKeys = keysFromTouches([e]); applyKeys(); });
+window.addEventListener('mousemove', (e) => { if (mouseDown) { touchKeys = keysFromTouches([e]); applyKeys(); } });
+window.addEventListener('mouseup', () => { if (mouseDown) { mouseDown = false; touchKeys = 0; applyKeys(); } });
+// tela de toque do DS (metade de baixo da imagem)
+function penAt(t, down) {
+  if (!gb || gb.sys !== 'nds') return;
+  if (!down) { gb.touch(0, 0, false); return; }
+  const r = canvas.getBoundingClientRect(), sc = Math.min(r.width / 256, r.height / 384);
+  const x = (t.clientX - (r.left + (r.width - 256 * sc) / 2)) / sc, y = (t.clientY - (r.top + (r.height - 384 * sc) / 2)) / sc - 192;
+  if (y >= 0 && y < 192 && x >= 0 && x < 256) gb.touch(x, y, true);
+}
+['touchstart', 'touchmove'].forEach(ev => canvas.addEventListener(ev, (e) => { if (gb && gb.sys === 'nds') { e.preventDefault(); penAt(e.touches[0], true); } }, { passive: false }));
+['touchend', 'touchcancel'].forEach(ev => canvas.addEventListener(ev, () => penAt(null, false)));
+let penMouse = false;
+canvas.addEventListener('mousedown', (e) => { penMouse = true; penAt(e, true); });
+window.addEventListener('mousemove', (e) => { if (penMouse) penAt(e, true); });
+window.addEventListener('mouseup', () => { if (penMouse) { penMouse = false; penAt(null, false); } });
+// teclado
+const KEYMAP = { ArrowRight: 0, ArrowLeft: 1, ArrowUp: 2, ArrowDown: 3, KeyX: 4, KeyK: 4, KeyZ: 5, KeyJ: 5, ShiftRight: 6, Backspace: 6, Enter: 7, KeyS: 8, KeyW: 8, KeyA: 9, KeyQ: 9, KeyD: 10, KeyC: 11 };
+window.addEventListener('keydown', (e) => {
+  if (e.code in KEYMAP) { keyKeys |= 1 << KEYMAP[e.code]; applyKeys(); e.preventDefault(); }
+  else if (e.code === 'Space') { setTurbo(true); e.preventDefault(); }
+});
+window.addEventListener('keyup', (e) => {
+  if (e.code in KEYMAP) { keyKeys &= ~(1 << KEYMAP[e.code]); applyKeys(); }
+  else if (e.code === 'Space') setTurbo(false);
+});
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+
+// ---------- Botões e menu ----------
+function setTurbo(v) { turbo = v; $('btnTurbo').classList.toggle('on', v); if (v) audioClear(); }
+$('btnTurbo').onclick = () => setTurbo(!turbo);
+function updatePause() { $('btnPause').textContent = paused ? '▶' : '❚❚'; $('btnPause').classList.toggle('on', paused); }
+$('btnPause').onclick = () => { if (!gb) return; paused = !paused; updatePause(); if (paused) persistSave(true); };
+function openSheet() { renderLib(); $('sheet').classList.add('open'); }
+function closeSheet() { $('sheet').classList.remove('open'); }
+$('btnMenu').onclick = openSheet; $('mClose').onclick = closeSheet;
+$('sheet').onclick = (e) => { if (e.target.id === 'sheet') closeSheet(); };
+$('btnOpenEmpty').onclick = $('mOpen').onclick = () => $('fileRom').click();
+$('mReset').onclick = () => { if (!gb) return; persistSave(true); gb.reset(); closeSheet(); toast('Reiniciado'); };
+let diagTimer = 0;
+function showDiag() {
+  if (!gb) return toast('Abra um jogo primeiro');
+  closeSheet(); $('diag').style.display = 'block';
+  const upd = () => { $('diagTxt').textContent = 'LE Pocket diagnóstico · ' + gb.sys.toUpperCase() + ' · ' + gb.title + '\n' + msAvg.toFixed(1) + ' ms por quadro (ideal: abaixo de 16) · velocidade ' + Math.round(emuFps / 59.7 * 100) + '%' + (slow ? ' · pulando quadros'  : '') + (turbo ? ' · TURBO' : '') + (paused ? ' · PAUSADO' : '') + '\n\n' + (gb.diag ? gb.diag() : 'Sem detalhes para este console.'); };
+  upd(); clearInterval(diagTimer); diagTimer = setInterval(upd, 500);
+}
+$('mDiag').onclick = showDiag;
+$('diagClose').onclick = () => { clearInterval(diagTimer); $('diag').style.display = 'none'; };
+function updSound() { $('mSound').textContent = soundOn ? '🔊 Som: ligado' : '🔇 Som: desligado'; }
+$('mSound').onclick = () => { soundOn = !soundOn; store.set('lep:sound', soundOn ? '1' : '0'); updSound(); initAudio(); };
+updSound();
+let memState = null;
+$('mSaveState').onclick = async () => {
+  if (!gb) return toast('Abra um jogo primeiro');
+  const s = gb.saveState(); closeSheet();
+  if (!s) return toast('Salvar estado ainda não funciona no DS');
+  try { await statePut(romId, s); memState = null; toast('Estado salvo ✓'); } catch (e) { memState = { id: romId, s }; toast('Estado salvo só até fechar o app'); }
+};
+$('mLoadState').onclick = async () => {
+  if (!gb) return toast('Abra um jogo primeiro');
+  closeSheet();
+  const s = (memState && memState.id === romId) ? memState.s : await stateGet(romId);
+  if (!s) return toast('Nenhum estado salvo');
+  try { gb.loadState(s); persistSave(true); toast('Estado carregado ✓'); } catch (e) { toast('Não deu para carregar'); }
+};
+$('mExport').onclick = () => {
+  if (!gb) return toast('Abra um jogo primeiro');
+  const d = gb.getSave(); if (!d) return toast('Este jogo ainda não gravou nenhum save');
+  const fname = $('gameTitle').textContent + '.sav';
+  if (dl) { dl.save({ filename: fname, data: new Blob([d], { type: 'application/octet-stream' }) }).catch(() => toast('Download cancelado')); return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([d], { type: 'application/octet-stream' }));
+  a.download = $('gameTitle').textContent + '.sav'; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+};
+$('mImport').onclick = () => { if (!gb) return toast('Abra um jogo primeiro'); $('fileSav').click(); };
+function updPal() { document.querySelectorAll('#palSeg button').forEach(b => b.classList.toggle('sel', b.dataset.pal === palName)); }
+document.querySelectorAll('#palSeg button').forEach(b => b.onclick = () => {
+  palName = b.dataset.pal; store.set('lep:pal', palName); updPal();
+  if (gb && gb.sys !== 'gba') gb.shades = PALETTES[palName];
+});
+updPal();
+
+// tela inicial
+ctx2d.fillStyle = '#0d0c11'; ctx2d.fillRect(0, 0, 160, 144);
+// instalação como aplicativo (só na versão hospedada)
+/*PWA*/
+// abre o último jogo jogado
+(async () => {
+  const last = store.get('lep:last'); if (!last) return;
+  const r = (await libAll()).find(x => x.id === last); if (!r || r.size > BIG_ROM) return;
+  const data = await libData(last); if (!data) return;
+  if (!gb) { await startRom(new Uint8Array(data), r.name, false); paused = true; updatePause(); toast('Toque ▶ para continuar'); }
+})();
+})();
+</script>
+</body>
+</html>

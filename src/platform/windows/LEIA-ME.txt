@@ -1,0 +1,9 @@
+LE Pocket para Windows
+
+1. Extraia esta pasta.
+2. De dois cliques em "Instalar no Windows.bat".
+3. Abra o LE Pocket pelo atalho criado na Area de Trabalho ou no Menu Iniciar.
+
+Ele abre em janela propria (usa o Edge ou o Chrome que ja vem no Windows) e funciona sem internet.
+Para desinstalar, apague os atalhos e a pasta %LOCALAPPDATA%\LEPocket.
+Os jogos nao vem incluidos.
