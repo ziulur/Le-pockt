@@ -180,8 +180,12 @@ function nds3dInstall(N) {
       list = out;
     }
     const mx = (m) => [m[0], m[5], m[10], m[11], m[12], m[13], m[14], m[15]].map((x) => x.toFixed(2)).join(' ');
-    if (list.length < 3) { this.d3.clip++; if (!this.d3.out) { this.d3.out = fmt(first); this.d3.outP = mx(g.proj); this.d3.outM = mx(g.pos) + ' sp ' + g.sp + ' modo ' + g.mode; } return; }
-    if (!this.d3.inn) { this.d3.inn = fmt(first); const h = (v, n) => (v >>> 0).toString(16).toUpperCase().padStart(n, '0'); this.d3.poly = `attr ${h(g.attr, 8)} tex ${h(g.texParam, 8)} pal ${h(g.texPal, 4)} cor ${[first.r, first.g, first.b].map((x) => Math.round(x)).join(',')} dif ${g.dif.join(',')} amb ${g.amb.join(',')} emi ${g.emi.join(',')}`; }
+    if (list.length < 3) { this.d3.clip++; if (!this.d3.out) { this.d3.out = fmt(first); this.d3.outP = Array.from(g.proj, (x) => x.toFixed(3)).join(' '); this.d3.outM = mx(g.pos) + ' sp ' + g.sp + ' modo ' + g.mode; } return; }
+    if (!this.d3.inn) { this.d3.inn = fmt(first); const h = (v, n) => (v >>> 0).toString(16).toUpperCase().padStart(n, '0'); const TP = this.tTexPal, vh = this.vram.h, pb = g.texPal << ((((g.texParam >>> 26) & 7) === 2) ? 3 : 4);
+      const pc = []; for (let i = 0; i < 8; i++) { const a = pb + i * 2, o = TP[(a >>> 14) & 7]; pc.push(o < 0 ? '----' : h(vh[(o + (a & 0x3FFE)) >> 1], 4)); }
+      let nz = 0; for (let i = 0x80000 >> 1; i < 0x90000 >> 1; i++) if (vh[i]) nz++;
+      this.d3.pal = `end ${h(pb, 5)} cores ${pc.join(' ')} | E com dados ${nz} | slots ${Array.from(TP, (x) => x < 0 ? '-' : (x >> 14).toString(16)).join('')}`;
+      this.d3.poly = `attr ${h(g.attr, 8)} tex ${h(g.texParam, 8)} pal ${h(g.texPal, 4)} cor ${[first.r, first.g, first.b].map((x) => Math.round(x)).join(',')} dif ${g.dif.join(',')} amb ${g.amb.join(',')} emi ${g.emi.join(',')}`; }
     const vp = g.vp, vw = (vp[2] - vp[0] + 1) * 0.5, vh = (vp[3] - vp[1] + 1) * 0.5, oy = 191 - vp[3];
     const vs = list.map(v => { const iw = 1 / (v.w || 1e-9); return { x: (v.x * iw + 1) * vw + vp[0], y: (1 - v.y * iw) * vh + oy, z: v.z * iw, iw, r: v.r * iw, g: v.g * iw, b: v.b * iw, s: v.s * iw, t: v.t * iw }; });
     let area = 0;

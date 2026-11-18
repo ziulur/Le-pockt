@@ -2803,7 +2803,7 @@ class NDS {
     this.fifo = [0, 1].map(() => ({ buf: new Uint32Array(16), rd: 0, n: 0 }));
     this.saveData = new Uint8Array(0); this.svAddrLen = 0; this.saveDirty = false; this.saveUsed = false;
     this.irCart = rom[0x0C] === 0x49; if (this.irCart) this.svAlloc(3, 0x80000);
-    this.skipDraw = false; this.dDma7 = 0; this.gxIrqAt = 0; this.d3 = { cmd: 0, vtx: 0, beg: 0, cull: 0, clip: 0 }; this.dIrq = new Uint32Array(32);
+    this.skipDraw = false; this.dDma7 = 0; this.dLcdc = 0; this.dRemap = 0; this.gxIrqAt = 0; this.d3 = { cmd: 0, vtx: 0, beg: 0, cull: 0, clip: 0 }; this.dIrq = new Uint32Array(32);
     this.dPc = [[], []]; this.dPolys = 0; this.dSwaps = 0; this.dCard = 0; this.dSv = []; this.dSwi = [new Set(), new Set()]; this.dFrame = 0;
     this.buildFirmware();
     this.reset();
@@ -2824,7 +2824,7 @@ class NDS {
     return [`ARM9 ${cpu(0)}`, `ARM7 ${cpu(1)}`,
       `DISP A ${h(io[0][0])} B ${h(io[0][0x400])} POW ${h(io[0][0x304 >> 2], 4)} STAT ${h(this.dispstat[0], 4)}/${h(this.dispstat[1], 4)}`,
       `VRAM ${h(io[0][0x240 >> 2])} ${h(io[0][0x244 >> 2])} ${h(io[0][0x248 >> 2], 4)} CAP ${h(io[0][0x64 >> 2])}`,
-      `3D polis ${this.dPolys} trocas ${this.dSwaps} dma3d ${this.dDma7}\n3Dq cmds ${this.d3s ? this.d3s.cmd : 0} begin ${this.d3s ? this.d3s.beg : 0} vtx ${this.d3s ? this.d3s.vtx : 0} costas ${this.d3s ? this.d3s.cull : 0} fora ${this.d3s ? this.d3s.clip : 0}\n3Dv fora ${this.d3s && this.d3s.out ? this.d3s.out : '-'} | dentro ${this.d3s && this.d3s.inn ? this.d3s.inn : '-'}\n3Df proj ${this.d3s && this.d3s.outP || '-'} | pos ${this.d3s && this.d3s.outM || '-'}\n3Dp ${this.d3s && this.d3s.poly || '-'}\nPROJ ${this.g ? Array.from(this.g.proj, (x) => x.toFixed(2)).join(' ') : ''}\nPOS ${this.g ? Array.from(this.g.pos, (x) => x.toFixed(2)).join(' ') : ''} sp ${this.g ? this.g.sp : 0}\nIRQ9 ${[...this.dIrq].map((v, i) => v ? i + ':' + v : '').filter(Boolean).join(' ')} ctl ${h(io[0][0x60 >> 2], 4)} irq ${g.irq}`,
+      `3D polis ${this.dPolys} trocas ${this.dSwaps} dma3d ${this.dDma7}\n3Dq cmds ${this.d3s ? this.d3s.cmd : 0} begin ${this.d3s ? this.d3s.beg : 0} vtx ${this.d3s ? this.d3s.vtx : 0} costas ${this.d3s ? this.d3s.cull : 0} fora ${this.d3s ? this.d3s.clip : 0}\n3Dv fora ${this.d3s && this.d3s.out ? this.d3s.out : '-'} | dentro ${this.d3s && this.d3s.inn ? this.d3s.inn : '-'}\n3Df proj ${this.d3s && this.d3s.outP || '-'} | pos ${this.d3s && this.d3s.outM || '-'}\n3Dp ${this.d3s && this.d3s.poly || '-'}\n3Dt ${this.d3s && this.d3s.pal || '-'} | escritas LCDC ${this.dLcdc} | trocas VRAM ${this.dRemap}\nPROJ ${this.g ? Array.from(this.g.proj, (x) => x.toFixed(2)).join(' ') : ''}\nPOS ${this.g ? Array.from(this.g.pos, (x) => x.toFixed(2)).join(' ') : ''} sp ${this.g ? this.g.sp : 0}\nIRQ9 ${[...this.dIrq].map((v, i) => v ? i + ':' + v : '').filter(Boolean).join(' ')} ctl ${h(io[0][0x60 >> 2], 4)} irq ${g.irq}`,
       `IPC sync ${this.ipcOut[0]}/${this.ipcOut[1]} fifo ${this.fifo[0].n}/${this.fifo[1].n} cnt ${h(this.fcnt[0], 4)}/${h(this.fcnt[1], 4)} err ${this.ferr[0]}/${this.ferr[1]}`,
       `CARD ctl ${h(this.romctrl)} cmd ${h(io[this.cardC][0x1A8 >> 2])} leituras ${this.dCard}`,
       `SAVE end ${this.svAddrLen} tam ${this.saveData.length} usado ${this.saveUsed ? 1 : 0} ir ${this.irCart ? 1 : 0} cmds ${this.dSv.map(x => h(x, 2)).join(' ')}`,
@@ -2927,6 +2927,7 @@ class NDS {
   remap() {
     const io = this.io[0], cnt = [0, 1, 2, 3, 4, 5, 6, 8, 9].map(i => (io[(0x240 + (i & ~3)) >> 2] >>> ((i & 3) << 3)) & 0xFF);
     if (this.g) this.g.texCache.clear();
+    this.dRemap = (this.dRemap || 0) + 1;
     this.tTex.fill(-1); this.tTexPal.fill(-1); this.tBgA.fill(-1); this.tBgB.fill(-1); this.tObjA.fill(-1); this.tObjB.fill(-1); this.tLcdc.fill(-1);
     this.bgExt[0].fill(-1); this.bgExt[1].fill(-1); this.objExt[0] = -1; this.objExt[1] = -1; this.vt7[0] = -1; this.vt7[1] = -1;
     const set = (t, page, b) => { for (let i = 0; i < BANK_PAGES[b]; i++) if (page + i < t.length) t[page + i] = BANK_OFF[b] + i * 0x4000; };
@@ -2995,8 +2996,8 @@ class NDS {
   r16(c, a) { if (this.fast(c, a)) return this.mm.h[this.mo >> 1]; if ((a >>> 24) === 4) return (this.ioR(c, (a & ~3) >>> 0) >>> ((a & 2) << 3)) & 0xFFFF; return 0; }
   r32(c, a) { if (this.fast(c, a)) return this.mm.w[this.mo >> 2] | 0; if ((a >>> 24) === 4) return this.ioR(c, a) | 0; return 0; }
   w8(c, a, v) { if (this.fast(c, a)) { this.mm.b[this.mo] = v; return; } if ((a >>> 24) === 4) { const s = (a & 3) << 3; this.ioW(c, (a & ~3) >>> 0, v << s, (0xFF << s) >>> 0); } }
-  w16(c, a, v) { if (this.fast(c, a)) { this.mm.h[this.mo >> 1] = v; return; } if ((a >>> 24) === 4) { const s = (a & 2) << 3; this.ioW(c, (a & ~3) >>> 0, v << s, (0xFFFF << s) >>> 0); } }
-  w32(c, a, v) { if (this.fast(c, a)) { this.mm.w[this.mo >> 2] = v; return; } if ((a >>> 24) === 4) this.ioW(c, a, v, 0xFFFFFFFF); }
+  w16(c, a, v) { if ((a >>> 23) === 0x0D) this.dLcdc++; if (this.fast(c, a)) { this.mm.h[this.mo >> 1] = v; return; } if ((a >>> 24) === 4) { const s = (a & 2) << 3; this.ioW(c, (a & ~3) >>> 0, v << s, (0xFFFF << s) >>> 0); } }
+  w32(c, a, v) { if ((a >>> 23) === 0x0D) this.dLcdc++; if (this.fast(c, a)) { this.mm.w[this.mo >> 2] = v; return; } if ((a >>> 24) === 4) this.ioW(c, a, v, 0xFFFFFFFF); }
 
   cp15r(id) { switch (id) { case 0x000: return 0x41059461; case 0x001: return 0x0F0D2112; case 0x100: return this.cp15ctl; case 0x910: return this.dtcmReg; case 0x911: return this.itcmReg; } return 0; }
   cp15w(id, v) {
@@ -3290,7 +3291,7 @@ class NDS {
   // ================= Quadro =================
   runFrame() {
     this.dFrame++;
-    if (this.dFrame % 60 === 0) this.dIrq.fill(0);
+    if (this.dFrame % 60 === 0) { this.dIrq.fill(0); this.dLcdc = 0; this.dRemap = 0; }
     if ((this.dFrame & 7) === 0) for (let c = 0; c < 2; c++) { const a = this.dPc[c]; a.push(this.cpu[c].r[15]); if (a.length > 6) a.shift(); }
     for (let line = 0; line < 263; line++) {
       this.vcount = line;
@@ -3824,8 +3825,12 @@ function nds3dInstall(N) {
       list = out;
     }
     const mx = (m) => [m[0], m[5], m[10], m[11], m[12], m[13], m[14], m[15]].map((x) => x.toFixed(2)).join(' ');
-    if (list.length < 3) { this.d3.clip++; if (!this.d3.out) { this.d3.out = fmt(first); this.d3.outP = mx(g.proj); this.d3.outM = mx(g.pos) + ' sp ' + g.sp + ' modo ' + g.mode; } return; }
-    if (!this.d3.inn) { this.d3.inn = fmt(first); const h = (v, n) => (v >>> 0).toString(16).toUpperCase().padStart(n, '0'); this.d3.poly = `attr ${h(g.attr, 8)} tex ${h(g.texParam, 8)} pal ${h(g.texPal, 4)} cor ${[first.r, first.g, first.b].map((x) => Math.round(x)).join(',')} dif ${g.dif.join(',')} amb ${g.amb.join(',')} emi ${g.emi.join(',')}`; }
+    if (list.length < 3) { this.d3.clip++; if (!this.d3.out) { this.d3.out = fmt(first); this.d3.outP = Array.from(g.proj, (x) => x.toFixed(3)).join(' '); this.d3.outM = mx(g.pos) + ' sp ' + g.sp + ' modo ' + g.mode; } return; }
+    if (!this.d3.inn) { this.d3.inn = fmt(first); const h = (v, n) => (v >>> 0).toString(16).toUpperCase().padStart(n, '0'); const TP = this.tTexPal, vh = this.vram.h, pb = g.texPal << ((((g.texParam >>> 26) & 7) === 2) ? 3 : 4);
+      const pc = []; for (let i = 0; i < 8; i++) { const a = pb + i * 2, o = TP[(a >>> 14) & 7]; pc.push(o < 0 ? '----' : h(vh[(o + (a & 0x3FFE)) >> 1], 4)); }
+      let nz = 0; for (let i = 0x80000 >> 1; i < 0x90000 >> 1; i++) if (vh[i]) nz++;
+      this.d3.pal = `end ${h(pb, 5)} cores ${pc.join(' ')} | E com dados ${nz} | slots ${Array.from(TP, (x) => x < 0 ? '-' : (x >> 14).toString(16)).join('')}`;
+      this.d3.poly = `attr ${h(g.attr, 8)} tex ${h(g.texParam, 8)} pal ${h(g.texPal, 4)} cor ${[first.r, first.g, first.b].map((x) => Math.round(x)).join(',')} dif ${g.dif.join(',')} amb ${g.amb.join(',')} emi ${g.emi.join(',')}`; }
     const vp = g.vp, vw = (vp[2] - vp[0] + 1) * 0.5, vh = (vp[3] - vp[1] + 1) * 0.5, oy = 191 - vp[3];
     const vs = list.map(v => { const iw = 1 / (v.w || 1e-9); return { x: (v.x * iw + 1) * vw + vp[0], y: (1 - v.y * iw) * vh + oy, z: v.z * iw, iw, r: v.r * iw, g: v.g * iw, b: v.b * iw, s: v.s * iw, t: v.t * iw }; });
     let area = 0;
