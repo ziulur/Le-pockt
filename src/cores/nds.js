@@ -767,6 +767,7 @@ class NDS {
           const tn = a2 & 0x3FF; let ba;
           if (dc & 0x40) ba = (tn << (7 + ((dc >>> 22) & 1))) + (ty * w + tx) * 2;
           else { const mx = (dc & 0x20) ? 0x1F : 0x0F; ba = ((tn & mx) * 8 + tx + ((tn & ~mx) >> ((dc & 0x20) ? 5 : 4)) * 8 * ((dc & 0x20) ? 256 : 128) + ty * ((dc & 0x20) ? 256 : 128)) * 2; }
+          if (!(a2 >>> 12)) continue; // OBJ bitmap com alfa 0 fica invisível
           const cv = this.vh(T, mk, ba);
           if ((cv & 0x8000) && prio < objPri[x]) { objLine[x] = cv & 0x7FFF; objPri[x] = prio; objSemi[x] = 0; }
           continue;

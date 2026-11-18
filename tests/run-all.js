@@ -106,7 +106,7 @@ section('DS 3D e captura', () => {
   g.w8(0, 0x04000243, 0x80); g.w8(0, 0x04000245, 0x80);
   for (let y = 0; y < 8; y++) for (let x = 0; x < 4; x++) { const c0 = ((x * 2 ^ y) & 1) ? 1 : 2, c1 = (((x * 2 + 1) ^ y) & 1) ? 1 : 2; g.w8(0, 0x06860000 + y * 4 + x, c0 | (c1 << 4)); }
   g.w16(0, 0x06890002, 0x7FFF); g.w16(0, 0x06890004, 0x001F); g.w8(0, 0x04000243, 0x83); g.w8(0, 0x04000245, 0x83);
-  W(0x04000000, 0x00010108); g.w16(0, 0x04000060, 0x0009); W(0x04000350, 0x001F0000 | (4 << 10)); W(0x04000580, (191 << 24) | (255 << 16));
+  W(0x04000000, 0x00010108); g.w16(0, 0x04000060, 0x0009); W(0x04000350, 0x001F0000 | (4 << 10)); W(0x04000354, 0x7FFF); W(0x04000580, (191 << 24) | (255 << 16));
   W(0x04000440, 0); W(0x04000454, 0); W(0x04000440, 2); W(0x04000454, 0);
   W(0x04000400, 0x1B1C); [F(-0.1), 0, 0, F(0.9), F(0.9), F(1)].forEach((v) => W(0x04000400, v));
   const vtx = (x, y, z) => { W(0x0400048C, (F(x) & 0xFFFF) | (F(y) << 16)); W(0x0400048C, F(z) & 0xFFFF); };
@@ -118,7 +118,7 @@ section('DS 3D e captura', () => {
   check('polígonos na fila', g.g.polys.length, 2);
   check('matriz de recorte lida', Math.round(g.r32(0, 0x04000640) / 4096 * 1000), 900);
   W(0x04000540, 0); for (let i = 0; i < 3; i++) g.runFrame();
-  const px = (x, y) => g.out[y * 256 + x] >>> 0;
+  const hs = g.io16[8] & 0x1FF, px = (x, y) => g.out[y * 256 + x - hs] >>> 0; // a camada 3D rola com BG0HOFS, como no aparelho
   check('textura (pixel vermelho)', px(160, 60), 0xff0000ff); check('textura (pixel branco)', px(168, 64), 0xffffffff);
   check('degradê do triângulo', new Set([px(60, 120), px(90, 100), px(80, 60)]).size, 3);
   g.w8(0, 0x04000241, 0x80); W(0x04000064, 0x80000000 | (1 << 16) | (3 << 20)); W(0x04000540, 0); g.runFrame(); g.runFrame();
@@ -135,7 +135,7 @@ section('DS 3D e captura', () => {
 section('DS 3D sombreamento', () => {
   const g = new NDS(fx('nds-test.nds')); for (let i = 0; i < 12; i++) g.runFrame();
   const W = (a, v) => g.w32(0, a >>> 0, v | 0), F = (v) => Math.round(v * 4096) | 0;
-  W(0x04000000, 0x00010108); W(0x04000350, 0x001F0000); W(0x04000580, (191 << 24) | (255 << 16));
+  W(0x04000000, 0x00010108); W(0x04000350, 0x001F0000); W(0x04000354, 0x7FFF); W(0x04000580, (191 << 24) | (255 << 16));
   W(0x04000440, 0); W(0x04000454, 0); W(0x04000440, 2); W(0x04000454, 0);
   for (let i = 0; i < 32; i++) g.w16(0, 0x04000380 + i * 2, i === 5 ? 0x03E0 : 0x001F); // tabela: índice 5 = verde
   const vtx = (x, y) => { W(0x0400048C, (F(x) & 0xFFFF) | (F(y) << 16)); W(0x0400048C, 0); };
@@ -158,6 +158,16 @@ section('DS 3D sombreamento', () => {
   // a porta compactada ocupa 0x4000400..0x400043F (cópia com endereço subindo, como stmia)
   { W(0x04000440, 1); const words = [0x15 | (0x1B << 8), F(2), F(3), F(4)]; words.forEach((w, i) => W(0x04000400 + i * 4, w));
     check('porta compactada nos endereços espelhados', [g.g.pos[0], g.g.pos[5], g.g.pos[10]].join(','), '2,3,4'); W(0x04000440, 2); }
+  // teste de alfa: polígono com alfa abaixo da referência não aparece
+  g.w16(0, 0x04000060, 4); W(0x04000340, 15); poly((10 << 16) | 0xC0, 0x7FFF, 0); W(0x04000540, 0); g.runFrame(); g.runFrame();
+  check('teste de alfa esconde o polígono', g.out[96 * 256 + 128] >>> 0, (v) => v !== 0xffffffff);
+  // neblina: tabela cheia e cor vermelha
+  g.w16(0, 0x04000060, 0x80); W(0x04000358, 0x001F001F); for (let i = 0; i < 32; i++) g.w8(0, 0x04000360 + i, 127); W(0x0400035C, 0);
+  poly((31 << 16) | 0xC0 | 0x8000, 0x7FFF, 0); W(0x04000540, 0); g.runFrame(); g.runFrame();
+  check('neblina pinta com a cor da neblina', g.out[96 * 256 + 128] >>> 0, 0xff0000ff);
+  // aramado (alfa 0): só a borda, o meio fica vazio
+  g.w16(0, 0x04000060, 0); poly(0xC0, 0x7FFF, 0); W(0x04000540, 0); g.runFrame(); g.runFrame();
+  check('aramado não preenche o meio', g.out[96 * 256 + 128] >>> 0, (v) => v !== 0xffffffff);
   // coordenada de textura vinda da matriz de textura (modo 1): translação de 8 texels = 128 em 1/16 de texel
   W(0x04000440, 3); W(0x04000454, 0); W(0x04000470, 0); W(0x04000470, 0); W(0x04000470, 0); // MTX_TRANS zero
   W(0x04000440, 3); W(0x04000454, 0); W(0x04000470, F(128)); W(0x04000470, 0); W(0x04000470, 0); W(0x04000440, 2);

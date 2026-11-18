@@ -143,7 +143,7 @@ function nds3dInstall(N) {
       case 0x33: g.lightCol[p[0] >>> 30] = rgb(p[0]); return;
       case 0x40: this.d3.beg++; g.prim = p[0] & 3; g.verts.length = 0; g.strip = 0; g.attr = g.attrNext; return;
       case 0x41: return;
-      case 0x50: g.swap = true; return;
+      case 0x50: g.swap = true; g.swapP = p[0] & 3; return;
       case 0x60: g.vp = [p[0] & 0xFF, (p[0] >> 8) & 0xFF, (p[0] >> 16) & 0xFF, p[0] >>> 24]; return;
       case 0x71: {
         this.gxClip(); const x = ((p[0] << 16) >> 16) / 4096, y = (p[0] >> 16) / 4096, z = ((p[1] << 16) >> 16) / 4096, m = g.clip;
@@ -177,6 +177,7 @@ function nds3dInstall(N) {
       const d = DIST[pl]; let inside = true;
       for (const v of list) if (d(v) < 0) { inside = false; break; }
       if (inside) continue;
+      if (pl === 5 && !(g.attr & 0x1000)) { this.d3.clip++; return; } // atravessa o plano de fundo e o jogo pediu para esconder
       const out = [];
       for (let i = 0; i < list.length; i++) {
         const a = list[i], b = list[(i + 1) % list.length], da = d(a), db = d(b);
@@ -198,7 +199,8 @@ function nds3dInstall(N) {
     for (let i = 0; i < vs.length; i++) { const a = vs[i], b = vs[(i + 1) % vs.length]; area += a.x * b.y - b.x * a.y; }
     if (area === 0) return;
     if (area < 0 ? !(g.attr & 0x80) : !(g.attr & 0x40)) { this.d3.cull++; return; }
-    g.polys.push({ v: vs, attr: g.attr, tp: g.texParam, pal: g.texPal });
+    let y0 = 1e9, y1 = -1e9; for (const v of vs) { if (v.y < y0) y0 = v.y; if (v.y > y1) y1 = v.y; }
+    g.polys.push({ v: vs, attr: g.attr, tp: g.texParam, pal: g.texPal, key: (Math.max(0, Math.min(255, y1 | 0)) << 8) | Math.max(0, Math.min(255, y0 | 0)), n: g.polys.length });
   };
   P.gxVblank = function () {
     const g = this.g;
@@ -207,7 +209,7 @@ function nds3dInstall(N) {
     g.swap = false;
     const polys = g.polys; g.polys = []; g.nverts = 0;
     this.dPolys = polys.length; this.dSwaps++; this.d3s = this.d3; this.d3 = { cmd: 0, vtx: 0, beg: 0, cull: 0, clip: 0 };
-    if (!this.skipDraw || this.capOn) { this.gxRender(polys); this.gxSample(polys); }
+    if (!this.skipDraw || this.capOn) { this.gxRender(polys); this.gxPost(); this.gxSample(polys); }
   };
   P.gxTexture = function (tp, palBase) {
     const g = this.g, key = tp * 8192 + palBase; let tx = g.texCache.get(key);
@@ -248,12 +250,26 @@ function nds3dInstall(N) {
     const g = this.g; if (!g.pid) { g.pid = new Uint8Array(256 * 192); g.sten = new Uint8Array(256 * 192); }
     const io = this.io[0], color = g.color, alpha = g.alpha, depth = g.depth, pid = g.pid, sten = g.sten;
     const cc = io[0x350 >> 2], d3 = io[0x60 >> 2], texOn = d3 & 1, blendOn = d3 & 8, toonT = new Uint16Array(io.buffer, 0x380, 32);
-    color.fill(cc & 0x7FFF); alpha.fill((cc >> 16) & 31); depth.fill(2); pid.fill((cc >>> 24) & 63); sten.fill(0);
+    if (!g.fogb) g.fogb = new Uint8Array(256 * 192);
+    const fogb = g.fogb, wbuf = (g.swapP || 0) & 2, manual = (g.swapP || 0) & 1, atest = d3 & 4, aref = io[0x340 >> 2] & 31;
+    const cd = (io[0x354 >> 2] & 0x7FFF), clearZ = wbuf ? 2 : ((cd * 0x200 + 0x1FF) / 0xFFFFFF) * 2 - 1;
+    color.fill(cc & 0x7FFF); alpha.fill((cc >> 16) & 31); depth.fill(clearZ); pid.fill((cc >>> 24) & 63); sten.fill(0); fogb.fill((cc >>> 15) & 1);
+    if (d3 & 0x4000) { // imagem de fundo (slots 2 e 3 da VRAM de textura)
+      const T = this.tTex, vh = this.vram.h, off = io[0x354 >> 2] >>> 16, sx = off & 0xFF, sy = (off >> 8) & 0xFF;
+      for (let y = 0; y < 192; y++) for (let x = 0; x < 256; x++) {
+        const o = (((y + sy) & 255) * 256 + ((x + sx) & 255)) * 2, oc = T[(0x40000 + o) >>> 14], od = T[(0x60000 + o) >>> 14], i = y * 256 + x;
+        const c = oc < 0 ? 0 : vh[(oc + (o & 0x3FFF)) >> 1], dv = od < 0 ? 0x7FFF : vh[(od + (o & 0x3FFF)) >> 1];
+        color[i] = c & 0x7FFF; alpha[i] = c & 0x8000 ? 31 : 0; fogb[i] = dv >> 15; depth[i] = wbuf ? 2 : (((dv & 0x7FFF) * 0x200 + 0x1FF) / 0xFFFFFF) * 2 - 1;
+      }
+    }
     const transl = (p) => { const a = (p.attr >> 16) & 31, f = (p.tp >>> 26) & 7; return (a > 0 && a < 31) || (texOn && (f === 1 || f === 6)) || ((p.attr >> 4) & 3) === 3; };
-    const order = polys.filter(p => !transl(p)).concat(polys.filter(transl));
+    const byY = (a, b) => (a.key - b.key) || (a.n - b.n);
+    const op = polys.filter(p => !transl(p)).sort(byY), tr = polys.filter(transl); if (!manual) tr.sort(byY);
+    const order = op.concat(tr);
     for (const p of order) {
       const fmt = (p.tp >>> 26) & 7, tex = (texOn && fmt) ? this.gxTexture(p.tp, p.pal) : null;
-      let pa = (p.attr >> 16) & 31; if (pa === 0) pa = 31;
+      let pa = (p.attr >> 16) & 31; const wire = pa === 0; if (wire) pa = 31;
+      const pfog = (p.attr >> 15) & 1, ov = p.v, onEdge = (px, py) => { for (let e = 0; e < ov.length; e++) { const A = ov[e], B = ov[(e + 1) % ov.length], dx = B.x - A.x, dy = B.y - A.y, L = Math.hypot(dx, dy) || 1, dd = Math.abs((px - A.x) * dy - (py - A.y) * dx) / L; if (dd < 1) { const t = ((px - A.x) * dx + (py - A.y) * dy) / (L * L); if (t > -0.05 && t < 1.05) return true; } } return false; };
       const pmode = (p.attr >> 4) & 3, shadow = pmode === 3, id = (p.attr >>> 24) & 63, mask = shadow && id === 0, decal = pmode === 1, toon = pmode === 2, hilite = toon && (d3 & 2), eq = p.attr & 0x4000, zw = pa === 31 || (p.attr & 0x800);
       const repS = p.tp & 0x10000, repT = p.tp & 0x20000, flS = p.tp & 0x40000, flT = p.tp & 0x80000;
       const vs = p.v, a = vs[0];
@@ -272,7 +288,8 @@ function nds3dInstall(N) {
             if (w0 < -1e-7 || w1 < -1e-7) { if (started) break; continue; }
             const w2 = 1 - w0 - w1; if (w2 < -1e-7) { if (started) break; continue; }
             started = true;
-            const idx = row + x, dz = depth[idx], fail = eq ? Math.abs(z - dz) > 0.002 : z >= dz;
+            if (wire && !onEdge(x + 0.5, py)) continue;
+            const idx = row + x, dz = depth[idx], zc = wbuf ? 1 - 1 / (1 + 1 / (w0 * a.iw + w1 * b.iw + w2 * c.iw)) : z, fail = eq ? Math.abs(zc - dz) > 0.002 : zc >= dz;
             if (mask) { if (fail) sten[idx] = 1; continue; }
             if (fail) continue;
             if (shadow) { if (!sten[idx]) continue; sten[idx] = 0; if (pid[idx] === id) continue; }
@@ -293,7 +310,7 @@ function nds3dInstall(N) {
               else { r = ((tc & 31) + 1) * (r + 1) / 32 - 1; gg = (((tc >> 5) & 31) + 1) * (gg + 1) / 32 - 1; bb = (((tc >> 10) & 31) + 1) * (bb + 1) / 32 - 1; al = ((ta + 1) * (pa + 1) - 1) >> 5; }
             }
             if (hilite) { r += hr; gg += hg; bb += hb; }
-            if (al <= 0) continue;
+            if (al <= 0 || (atest && al <= aref)) continue;
             let ri = r < 0 ? 0 : r >= 30.5 ? 31 : (r + 0.5) | 0, gi = gg < 0 ? 0 : gg >= 30.5 ? 31 : (gg + 0.5) | 0, bi = bb < 0 ? 0 : bb >= 30.5 ? 31 : (bb + 0.5) | 0;
             if (al < 31 && pid[idx] === id && alpha[idx] < 31 && alpha[idx] > 0 && !shadow) continue;
             if (al < 31 && blendOn && alpha[idx]) {
@@ -301,10 +318,34 @@ function nds3dInstall(N) {
               ri = (ri * fa + (old & 31) * fb) >> 5; gi = (gi * fa + ((old >> 5) & 31) * fb) >> 5; bi = (bi * fa + ((old >> 10) & 31) * fb) >> 5;
               if (alpha[idx] < al) alpha[idx] = al;
               color[idx] = ri | (gi << 5) | (bi << 10); pid[idx] = id;
-              if (zw && !shadow) depth[idx] = z;
-            } else { color[idx] = ri | (gi << 5) | (bi << 10); alpha[idx] = al; pid[idx] = id; if (!shadow && (zw || al === 31)) depth[idx] = z; }
+              if (zw && !shadow) depth[idx] = zc; fogb[idx] &= pfog;
+            } else { color[idx] = ri | (gi << 5) | (bi << 10); alpha[idx] = al; pid[idx] = id; fogb[idx] = pfog; if (!shadow && (zw || al === 31)) depth[idx] = zc; }
           }
         }
+      }
+    }
+  };
+  P.gxPost = function () {
+    const g = this.g, io = this.io[0], d3 = io[0x60 >> 2], color = g.color, alpha = g.alpha, depth = g.depth, pid = g.pid, fogb = g.fogb;
+    if (d3 & 0x20) { // marcação de bordas
+      const et = new Uint16Array(io.buffer, 0x330, 8), mark = new Uint8Array(256 * 192);
+      for (let y = 0; y < 192; y++) for (let x = 0; x < 256; x++) {
+        const i = y * 256 + x; if (alpha[i] !== 31) continue; const id = pid[i], z = depth[i];
+        const chk = (j) => pid[j] !== id && z < depth[j];
+        if ((x > 0 && chk(i - 1)) || (x < 255 && chk(i + 1)) || (y > 0 && chk(i - 256)) || (y < 191 && chk(i + 256))) mark[i] = 1;
+      }
+      for (let i = 0; i < mark.length; i++) if (mark[i]) color[i] = et[pid[i] >> 3] & 0x7FFF;
+    }
+    if (d3 & 0x80) { // neblina
+      const fc = io[0x358 >> 2], fr = fc & 31, fg = (fc >> 5) & 31, fb = (fc >> 10) & 31, fa = (fc >> 16) & 31, onlyA = d3 & 0x40;
+      const off = io[0x35C >> 2] & 0x7FFF, step = 0x400 >> ((d3 >> 8) & 15), tb = new Uint8Array(io.buffer, 0x360, 32);
+      for (let i = 0; i < color.length; i++) {
+        if (!fogb[i]) continue;
+        const z15 = Math.max(0, Math.min(0x7FFF, ((depth[i] + 1) / 2 * 0xFFFFFF) >> 9));
+        let dn; if (z15 <= off) dn = tb[0] & 127; else { const f = (z15 - off) / (step || 1), k = f | 0; dn = k >= 31 ? tb[31] & 127 : (tb[k] & 127) + ((tb[k + 1] & 127) - (tb[k] & 127)) * (f - k); }
+        if (dn >= 127) dn = 128; const kb = 128 - dn, c = color[i];
+        if (!onlyA) color[i] = (((fr * dn + (c & 31) * kb) >> 7) | ((((fg * dn + ((c >> 5) & 31) * kb) >> 7)) << 5) | ((((fb * dn + ((c >> 10) & 31) * kb) >> 7)) << 10));
+        alpha[i] = (fa * dn + alpha[i] * kb) >> 7;
       }
     }
   };
@@ -317,7 +358,8 @@ function nds3dInstall(N) {
   };
   P.gxLine = function (y, out) {
     const g = this.g, color = g.color, alpha = g.alpha, row = y * 256, la = this.line3dA || (this.line3dA = new Uint8Array(256));
-    for (let x = 0; x < 256; x++) { const a = alpha[row + x]; la[x] = a; out[x] = a ? color[row + x] : 0x8000; }
+    const hs = ((this.io16[8] & 0x1FF) << 23) >> 23;
+    for (let x = 0; x < 256; x++) { const sx = x + hs; if (sx < 0 || sx > 255) { la[x] = 0; out[x] = 0x8000; continue; } const a = alpha[row + sx]; la[x] = a; out[x] = a ? color[row + sx] : 0x8000; }
   };
 }
 if (typeof module !== 'undefined') module.exports = nds3dInstall; else nds3dInstall(NDS);
