@@ -1,7 +1,7 @@
 name: Montar aplicativos
 on:
   push:
-    branches: [main, 'melhoria/**']
+    branches: [main]
   pull_request: {}
   workflow_dispatch: {}
 permissions:
@@ -61,6 +61,7 @@ jobs:
   ios:
     needs: web
     runs-on: macos-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -88,7 +89,8 @@ jobs:
           if-no-files-found: error
   publicar:
     needs: [web, android, ios]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # publica mesmo se a máquina Mac do GitHub não estiver disponível; nesse caso o .ipa anterior é mantido
+    if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.web.result == 'success' && needs.android.result == 'success' && needs.ios.result != 'failure'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -96,9 +98,12 @@ jobs:
         with:
           path: art
       - name: Junta os arquivos
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir saida
-          cp art/android/LE-Pocket.apk art/ios/LE-Pocket.ipa art/web/LE-Pocket-Windows.zip saida/
+          cp art/android/LE-Pocket.apk art/web/LE-Pocket-Windows.zip saida/
+          if [ -f art/ios/LE-Pocket.ipa ]; then cp art/ios/LE-Pocket.ipa saida/; else gh release download baixar -p LE-Pocket.ipa -D saida || echo "sem .ipa anterior"; fi
           cp art/web/web/LE-Pocket.html saida/LE-Pocket.html
           ls -la saida
       - env:
