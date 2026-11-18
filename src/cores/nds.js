@@ -613,7 +613,8 @@ class NDS {
     let eva = alpha & 0x1F, evb = (alpha >> 8) & 0x1F, evy = R(0x54) & 0x1F;
     if (eva > 16) eva = 16; if (evb > 16) evb = 16; if (evy > 16) evy = 16;
     const backdrop = this.pal.h[e << 9] & 0x7FFF, objLine = this.objLine, objPri = this.objPri, objSemi = this.objSemi, bgLine = this.bgLine;
-    const needSecond = bldMode === 1 || (objOn && this.anySemi);
+    const has3d = e === 0 && (dc & 8) && (en & 1), la3 = this.line3dA;
+    const needSecond = bldMode === 1 || (objOn && this.anySemi) || has3d;
     for (let x = 0; x < 256; x++) {
       const m = winOn ? mask[x] : 0x3F;
       let l1 = 5, c1 = backdrop, l2 = 5, c2 = backdrop, found = 0;
@@ -632,6 +633,7 @@ class NDS {
       }
       if (objPending && found < 2) { if (found === 0) { l1 = 4; c1 = objLine[x]; } else { l2 = 4; c2 = objLine[x]; } }
       if (l1 === 4 && objSemi[x] && (m & 0x20) && (t2 & (1 << l2))) c1 = this.blend(c1, c2, eva, evb);
+      else if (has3d && l1 === 0 && la3[x] < 31 && (m & 0x20) && (t2 & (1 << l2))) { const a = la3[x] + 1; c1 = this.blend(c1, c2, a >> 1, 16 - (a >> 1)); }
       else if (bldMode && (m & 0x20) && (t1 & (1 << l1))) {
         if (bldMode === 1) { if (t2 & (1 << l2)) c1 = this.blend(c1, c2, eva, evb); }
         else c1 = this.fade(c1, bldMode === 2, evy);
