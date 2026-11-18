@@ -143,6 +143,16 @@ section('DS 3D sombreamento', () => {
   g.w16(0, 0x04000060, 0); check('toon: cor vem da tabela (verde)', quad(2, 5), 0xff00ff00);
   g.w16(0, 0x04000060, 2); check('highlight: cinza da cor + tabela', quad(2, 5), (v) => ((v >> 8) & 0xFF) === 0xFF && (v & 0xFF) > 0x20 && (v & 0xFF) < 0x40);
   g.w16(0, 0x04000060, 0); check('modulação normal mantém a cor do vértice', quad(0, 0x7FFF), 0xffffffff);
+  // sombra: polígono de sombra (modo 3) sem máscara não escurece o personagem
+  const poly = (attr, color, z) => { W(0x040004A4, attr); W(0x040004A8, 0); W(0x04000500, 1); W(0x04000480, color); const v = (x, y) => { W(0x0400048C, (F(x) & 0xFFFF) | (F(y) << 16)); W(0x0400048C, F(z) & 0xFFFF); }; v(-0.5, 0.5); v(-0.5, -0.5); v(0.5, -0.5); v(0.5, 0.5); W(0x04000504, 0); };
+  poly((31 << 16) | 0xC0 | (1 << 24), 0x7FFF, 0); poly((20 << 16) | 0xC0 | 0x30 | (2 << 24), 0, -0.1); W(0x04000540, 0); g.runFrame(); g.runFrame();
+  check('sombra sem máscara não pinta de preto', g.out[96 * 256 + 128] >>> 0, 0xffffffff);
+  g.w16(0, 0x04000060, 8); poly((31 << 16) | 0xC0 | (1 << 24), 0x7FFF, 0); poly((20 << 16) | 0xC0 | 0x30, 0, 0.2); poly((20 << 16) | 0xC0 | 0x30 | (2 << 24), 0, -0.1); W(0x04000540, 0); g.runFrame(); g.runFrame();
+  check('sombra com máscara escurece o chão', g.out[96 * 256 + 128] >>> 0, (v) => v !== 0xffffffff && ((v >>> 0) & 0xFF) > 0x40);
+  // portas diretas não bagunçam um comando compactado pela metade
+  W(0x04000440, 1); W(0x04000400, 0x16); for (let i = 0; i < 8; i++) W(0x04000400, (i % 5 === 0) ? 4096 : 0); W(0x04000480, 0x7FFF); for (let i = 8; i < 16; i++) W(0x04000400, (i % 5 === 0) ? 4096 : 0);
+  check('matriz compactada intacta com escrita direta no meio', Array.from(g.g.pos).join(','), '1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1'); W(0x04000440, 2);
+  g.w16(0, 0x04000060, 0);
   // coordenada de textura vinda da matriz de textura (modo 1): translação de 8 texels = 128 em 1/16 de texel
   W(0x04000440, 3); W(0x04000454, 0); W(0x04000470, 0); W(0x04000470, 0); W(0x04000470, 0); // MTX_TRANS zero
   W(0x04000440, 3); W(0x04000454, 0); W(0x04000470, F(128)); W(0x04000470, 0); W(0x04000470, 0); W(0x04000440, 2);
