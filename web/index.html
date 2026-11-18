@@ -2808,6 +2808,11 @@ class NDS {
       `CARD ctl ${h(this.romctrl)} cmd ${h(io[this.cardC][0x1A8 >> 2])} leituras ${this.dCard}`,
       `SAVE end ${this.svAddrLen} tam ${this.saveData.length} usado ${this.saveUsed ? 1 : 0} ir ${this.irCart ? 1 : 0} cmds ${this.dSv.map(x => h(x, 2)).join(' ')}`,
       `SWI9 ${[...this.dSwi[0]].map(x => h(x, 2)).join(' ')} | SWI7 ${[...this.dSwi[1]].map(x => h(x, 2)).join(' ')}`,
+      `R9 ${Array.from(this.cpu[0].r.slice(0, 8), x => h(x)).join(' ')}`,
+      `R9b ${Array.from(this.cpu[0].r.slice(8, 13), x => h(x)).join(' ')}`,
+      `COD ${((a0) => { const o = []; for (let a = a0; a < a0 + 32; a += 2) o.push(h(this.r16(0, a >>> 0), 4)); return h(a0) + ': ' + o.join(' '); })(((this.cpu[0].r[15] & ~1) - 0x14) >>> 0)}`,
+      `DMA9 ${[0, 1, 2, 3].map(i => h(io[0][((0xB0 + i * 12) >> 2) + 2])).join(' ')}`,
+      `DMA7 ${[0, 1, 2, 3].map(i => h(io[1][((0xB0 + i * 12) >> 2) + 2])).join(' ')}`,
       `SOM ${h(io[1][0x500 >> 2], 4)} TMR9 ${this.timers[0].map(t => t.on ? 1 : 0).join('')} TMR7 ${this.timers[1].map(t => t.on ? 1 : 0).join('')} quadro ${this.dFrame}`].join('\n');
   }
   saveState() { return null; }
@@ -3348,12 +3353,28 @@ class NDS {
     else for (let x = 0; x < 256; x++) out[base + x] = lut[lb[x]];
   }
   capture(y) {
-    const cnt = this.io[0][0x64 >> 2], size = (cnt >>> 20) & 3, w = size === 0 ? 128 : 256, h = [128, 64, 128, 192][size];
+    const io = this.io[0], cnt = io[0x64 >> 2], size = (cnt >>> 20) & 3, w = size === 0 ? 128 : 256, h = [128, 64, 128, 192][size];
     if (y >= h) return;
-    const vh = this.vram.h, bank = (cnt >>> 16) & 3, wofs = ((cnt >>> 18) & 3) * 0x8000, lb = this.lineBuf;
-    const o = bank * 0x20000;
-    if (cnt & 0x01000000) { const g = this.g, row = y * 256; for (let x = 0; x < w; x++) vh[(o + ((wofs + (y * w + x) * 2) & 0x1FFFF)) >> 1] = g.alpha[row + x] ? g.color[row + x] | 0x8000 : 0; }
-    else for (let x = 0; x < w; x++) vh[(o + ((wofs + (y * w + x) * 2) & 0x1FFFF)) >> 1] = lb[x] | 0x8000;
+    const vh = this.vram.h, wbase = ((cnt >>> 16) & 3) * 0x20000, wofs = ((cnt >>> 18) & 3) * 0x8000, lb = this.lineBuf, g = this.g, row = y * 256;
+    const src = (cnt >>> 29) & 3, a3d = cnt & 0x01000000, rbase = ((io[0] >>> 18) & 3) * 0x20000, rofs = ((cnt >>> 26) & 3) * 0x8000;
+    let eva = cnt & 31, evb = (cnt >>> 8) & 31; if (eva > 16) eva = 16; if (evb > 16) evb = 16;
+    for (let x = 0; x < w; x++) {
+      let ca = 0, aa = 1;
+      if (a3d) { aa = g.alpha[row + x] ? 1 : 0; ca = g.color[row + x]; } else ca = lb[x];
+      let out;
+      if (src === 0) out = aa ? ca | 0x8000 : 0;
+      else {
+        const cb = vh[(rbase + ((rofs + (y * 256 + x) * 2) & 0x1FFFF)) >> 1];
+        if (src === 1) out = cb;
+        else {
+          const ka = aa ? eva : 0, kb = (cb & 0x8000) ? evb : 0;
+          let r = ((ca & 31) * ka + (cb & 31) * kb + 8) >> 4, gg = (((ca >> 5) & 31) * ka + ((cb >> 5) & 31) * kb + 8) >> 4, bb = (((ca >> 10) & 31) * ka + ((cb >> 10) & 31) * kb + 8) >> 4;
+          if (r > 31) r = 31; if (gg > 31) gg = 31; if (bb > 31) bb = 31;
+          out = r | (gg << 5) | (bb << 10) | ((ka || kb) ? 0x8000 : 0);
+        }
+      }
+      vh[(wbase + ((wofs + (y * w + x) * 2) & 0x1FFFF)) >> 1] = out;
+    }
   }
   blend(c1, c2, eva, evb) {
     let r = ((c1 & 31) * eva + (c2 & 31) * evb) >> 4, g = (((c1 >> 5) & 31) * eva + ((c2 >> 5) & 31) * evb) >> 4, b = (((c1 >> 10) & 31) * eva + ((c2 >> 10) & 31) * evb) >> 4;
