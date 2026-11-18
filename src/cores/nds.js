@@ -65,7 +65,7 @@ class NDS {
     return [`ARM9 ${cpu(0)}`, `ARM7 ${cpu(1)}`,
       `DISP A ${h(io[0][0])} B ${h(io[0][0x400])} POW ${h(io[0][0x304 >> 2], 4)} STAT ${h(this.dispstat[0], 4)}/${h(this.dispstat[1], 4)}`,
       `VRAM ${h(io[0][0x240 >> 2])} ${h(io[0][0x244 >> 2])} ${h(io[0][0x248 >> 2], 4)} CAP ${h(io[0][0x64 >> 2])}`,
-      `3D polis ${this.dPolys} trocas ${this.dSwaps} dma3d ${this.dDma7}\n3Dq cmds ${this.d3s ? this.d3s.cmd : 0} begin ${this.d3s ? this.d3s.beg : 0} vtx ${this.d3s ? this.d3s.vtx : 0} costas ${this.d3s ? this.d3s.cull : 0} fora ${this.d3s ? this.d3s.clip : 0}\nIRQ9 ${[...this.dIrq].map((v, i) => v ? i + ':' + v : '').filter(Boolean).join(' ')} ctl ${h(io[0][0x60 >> 2], 4)} irq ${g.irq}`,
+      `3D polis ${this.dPolys} trocas ${this.dSwaps} dma3d ${this.dDma7}\n3Dq cmds ${this.d3s ? this.d3s.cmd : 0} begin ${this.d3s ? this.d3s.beg : 0} vtx ${this.d3s ? this.d3s.vtx : 0} costas ${this.d3s ? this.d3s.cull : 0} fora ${this.d3s ? this.d3s.clip : 0}\n3Dv fora ${this.d3s && this.d3s.out ? this.d3s.out : '-'} | dentro ${this.d3s && this.d3s.inn ? this.d3s.inn : '-'}\nPROJ ${this.g ? Array.from(this.g.proj, (x) => x.toFixed(2)).join(' ') : ''}\nPOS ${this.g ? Array.from(this.g.pos, (x) => x.toFixed(2)).join(' ') : ''} sp ${this.g ? this.g.sp : 0}\nIRQ9 ${[...this.dIrq].map((v, i) => v ? i + ':' + v : '').filter(Boolean).join(' ')} ctl ${h(io[0][0x60 >> 2], 4)} irq ${g.irq}`,
       `IPC sync ${this.ipcOut[0]}/${this.ipcOut[1]} fifo ${this.fifo[0].n}/${this.fifo[1].n} cnt ${h(this.fcnt[0], 4)}/${h(this.fcnt[1], 4)} err ${this.ferr[0]}/${this.ferr[1]}`,
       `CARD ctl ${h(this.romctrl)} cmd ${h(io[this.cardC][0x1A8 >> 2])} leituras ${this.dCard}`,
       `SAVE end ${this.svAddrLen} tam ${this.saveData.length} usado ${this.saveUsed ? 1 : 0} ir ${this.irCart ? 1 : 0} cmds ${this.dSv.map(x => h(x, 2)).join(' ')}`,
@@ -77,8 +77,32 @@ class NDS {
       `DMA7 ${[0, 1, 2, 3].map(i => h(io[1][((0xB0 + i * 12) >> 2) + 2])).join(' ')}`,
       `SOM ${h(io[1][0x500 >> 2], 4)} TMR9 ${this.timers[0].map(t => t.on ? 1 : 0).join('')} TMR7 ${this.timers[1].map(t => t.on ? 1 : 0).join('')} quadro ${this.dFrame}`].join('\n');
   }
-  saveState() { return null; }
-  loadState() { throw new Error('sem estado'); }
+  // ----- Salvar estado: copia toda a memória e o estado interno (o jogo continua exatamente de onde parou) -----
+  saveState() {
+    const s = { v: 1, sys: 'nds', title: this.title, f: {}, cpu: [] };
+    for (const k of Object.keys(this)) {
+      if (NDS.NO_STATE.has(k)) continue;
+      const v = this[k];
+      if (typeof v === 'function') continue;
+      if (v && v.b instanceof Uint8Array && v.h instanceof Uint16Array) s.f[k] = { mv: v.b.slice() };
+      else if (k === 'g') { const g = Object.assign({}, v); g.texCache = null; s.f[k] = structuredClone(g); }
+      else s.f[k] = structuredClone(v);
+    }
+    for (const c of this.cpu) { const o = {}; for (const k of NDS.CPU_STATE) o[k] = (c[k] && c[k].slice) ? c[k].slice() : c[k]; s.cpu.push(o); }
+    return s;
+  }
+  loadState(s) {
+    if (!s || s.sys !== 'nds' || !s.f) throw new Error('estado de outro console');
+    for (const k of Object.keys(s.f)) {
+      const v = s.f[k], cur = this[k];
+      if (v && v.mv) { if (cur && cur.b && cur.b.length === v.mv.length) cur.b.set(v.mv); continue; }
+      this[k] = structuredClone(v);
+    }
+    if (this.g) this.g.texCache = new Map();
+    s.cpu.forEach((o, i) => { const c = this.cpu[i]; for (const k of NDS.CPU_STATE) { if (c[k] && c[k].set && o[k]) c[k].set(o[k]); else c[k] = o[k]; } });
+    this.remap(); this.updNext(0); this.updNext(1);
+    this.saveDirty = true; this.audioLen = 0;
+  }
   press(k, down) {
     if (k >= 10) { const b = 1 << (k - 10); if (down) this.xy |= b; else this.xy &= ~b; return; }
     const b = 1 << N_KEY[k]; if (down) this.keys |= b; else this.keys &= ~b;
@@ -854,4 +878,7 @@ class NDS {
     cpu.cycles += o.length * 4;
   }
 }
+NDS.NO_STATE = new Set(['rom', 'dv', 'cpu', 'fb', 'out', 'lut', 'bios9', 'bios7', 'fw', 'userSettings', 'bgLine', 'objLine', 'objPri', 'objSemi', 'objWin', 'winMask',
+  'order', 'bgPrio', 'lineBuf', 'audioBuf', 'mm', 'mo', 'd3', 'd3s', 'dIrq', 'dPc', 'dSwi', 'dSv', 'skipDraw', 'romLen', 'romMask', 'title', 'irCart']);
+NDS.CPU_STATE = ['r', 'bank13', 'bank14', 'spsr', 'fiqHi', 'usrHi', 'mode', 'cN', 'cZ', 'cC', 'cV', 'cI', 'cF', 'cT', 'cQ', 'sc', 'cycles', 'tgt', 'halted', 'irqLine', 'ime', 'intrWaiting', 'mlo', 'mhi'];
 if (typeof module !== 'undefined') { require('./nds3d.js')(NDS); require('./ndssnd.js')(NDS); module.exports = { NDS }; }

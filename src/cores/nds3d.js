@@ -165,7 +165,7 @@ function nds3dInstall(N) {
   const lerp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t, w: a.w + (b.w - a.w) * t, r: a.r + (b.r - a.r) * t, g: a.g + (b.g - a.g) * t, b: a.b + (b.b - a.b) * t, s: a.s + (b.s - a.s) * t, t: a.t + (b.t - a.t) * t });
   const DIST = [(v) => v.w + v.x, (v) => v.w - v.x, (v) => v.w + v.y, (v) => v.w - v.y, (v) => v.w + v.z, (v) => v.w - v.z];
   P.gxPoly = function (list) {
-    const g = this.g;
+    const g = this.g, first = list[0], fmt = (v) => [v.x, v.y, v.z, v.w].map((x) => x.toFixed(2)).join(' ');
     if (g.polys.length >= 6144 || ((g.attr >> 4) & 3) === 3) return;
     for (let pl = 0; pl < 6 && list.length >= 3; pl++) {
       const d = DIST[pl]; let inside = true;
@@ -179,7 +179,8 @@ function nds3dInstall(N) {
       }
       list = out;
     }
-    if (list.length < 3) { this.d3.clip++; return; }
+    if (list.length < 3) { this.d3.clip++; if (!this.d3.out) this.d3.out = fmt(first); return; }
+    if (!this.d3.inn) this.d3.inn = fmt(first);
     const vp = g.vp, vw = (vp[2] - vp[0] + 1) * 0.5, vh = (vp[3] - vp[1] + 1) * 0.5, oy = 191 - vp[3];
     const vs = list.map(v => { const iw = 1 / (v.w || 1e-9); return { x: (v.x * iw + 1) * vw + vp[0], y: (1 - v.y * iw) * vh + oy, z: v.z * iw, iw, r: v.r * iw, g: v.g * iw, b: v.b * iw, s: v.s * iw, t: v.t * iw }; });
     let area = 0;

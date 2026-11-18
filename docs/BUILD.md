@@ -57,7 +57,7 @@ node tests/fixtures-src/gb-demo-mkrom.js   # gera demo.gb na pasta atual
 2. `android` e `ios`: usam o `dist/web/LE-Pocket.html` do passo 1 (o mesmo arquivo testado).
 3. `publicar`: só na `main` e só se tudo acima passou. Publica APK, IPA, ZIP do Windows e HTML.
 
-Ramos `melhoria/**` e pull requests rodam build e testes, mas não publicam nada.
+Pull requests rodam build e testes, mas não publicam nada. Se a máquina Mac do GitHub não estiver disponível, a publicação sai com o APK novo e mantém o IPA anterior.
 
 ## Limites conhecidos
 
