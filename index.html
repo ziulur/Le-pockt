@@ -2830,7 +2830,7 @@ class NDS {
     return [`ARM9 ${cpu(0)}`, `ARM7 ${cpu(1)}`,
       `DISP A ${h(io[0][0])} B ${h(io[0][0x400])} POW ${h(io[0][0x304 >> 2], 4)} STAT ${h(this.dispstat[0], 4)}/${h(this.dispstat[1], 4)}`,
       `VRAM ${h(io[0][0x240 >> 2])} ${h(io[0][0x244 >> 2])} ${h(io[0][0x248 >> 2], 4)} CAP ${h(io[0][0x64 >> 2])}`,
-      `3D polis ${this.dPolys} trocas ${this.dSwaps} dma3d ${this.dDma7}\n3Dq cmds ${this.d3s ? this.d3s.cmd : 0} begin ${this.d3s ? this.d3s.beg : 0} vtx ${this.d3s ? this.d3s.vtx : 0} costas ${this.d3s ? this.d3s.cull : 0} fora ${this.d3s ? this.d3s.clip : 0}\n3Dv fora ${this.d3s && this.d3s.out ? this.d3s.out : '-'} | dentro ${this.d3s && this.d3s.inn ? this.d3s.inn : '-'}\nPROJ ${this.g ? Array.from(this.g.proj, (x) => x.toFixed(2)).join(' ') : ''}\nPOS ${this.g ? Array.from(this.g.pos, (x) => x.toFixed(2)).join(' ') : ''} sp ${this.g ? this.g.sp : 0}\nIRQ9 ${[...this.dIrq].map((v, i) => v ? i + ':' + v : '').filter(Boolean).join(' ')} ctl ${h(io[0][0x60 >> 2], 4)} irq ${g.irq}`,
+      `3D polis ${this.dPolys} trocas ${this.dSwaps} dma3d ${this.dDma7}\n3Dq cmds ${this.d3s ? this.d3s.cmd : 0} begin ${this.d3s ? this.d3s.beg : 0} vtx ${this.d3s ? this.d3s.vtx : 0} costas ${this.d3s ? this.d3s.cull : 0} fora ${this.d3s ? this.d3s.clip : 0}\n3Dv fora ${this.d3s && this.d3s.out ? this.d3s.out : '-'} | dentro ${this.d3s && this.d3s.inn ? this.d3s.inn : '-'}\n3Df proj ${this.d3s && this.d3s.outP || '-'} | pos ${this.d3s && this.d3s.outM || '-'}\n3Dp ${this.d3s && this.d3s.poly || '-'}\nPROJ ${this.g ? Array.from(this.g.proj, (x) => x.toFixed(2)).join(' ') : ''}\nPOS ${this.g ? Array.from(this.g.pos, (x) => x.toFixed(2)).join(' ') : ''} sp ${this.g ? this.g.sp : 0}\nIRQ9 ${[...this.dIrq].map((v, i) => v ? i + ':' + v : '').filter(Boolean).join(' ')} ctl ${h(io[0][0x60 >> 2], 4)} irq ${g.irq}`,
       `IPC sync ${this.ipcOut[0]}/${this.ipcOut[1]} fifo ${this.fifo[0].n}/${this.fifo[1].n} cnt ${h(this.fcnt[0], 4)}/${h(this.fcnt[1], 4)} err ${this.ferr[0]}/${this.ferr[1]}`,
       `CARD ctl ${h(this.romctrl)} cmd ${h(io[this.cardC][0x1A8 >> 2])} leituras ${this.dCard}`,
       `SAVE end ${this.svAddrLen} tam ${this.saveData.length} usado ${this.saveUsed ? 1 : 0} ir ${this.irCart ? 1 : 0} cmds ${this.dSv.map(x => h(x, 2)).join(' ')}`,
@@ -3749,7 +3749,7 @@ function nds3dInstall(N) {
       case 0x21: {
         const nx = s10(p[0], 0) / 512, ny = s10(p[0], 10) / 512, nz = s10(p[0], 20) / 512, v = g.vec;
         const x = nx * v[0] + ny * v[4] + nz * v[8], y = nx * v[1] + ny * v[5] + nz * v[9], z = nx * v[2] + ny * v[6] + nz * v[10];
-        if (((g.texParam >>> 30) & 3) === 2) { const t = g.tex; g.s = g.rs + (nx * t[0] + ny * t[4] + nz * t[8]) * 16; g.t = g.rt + (nx * t[1] + ny * t[5] + nz * t[9]) * 16; }
+        if (((g.texParam >>> 30) & 3) === 2) { const t = g.tex; g.s = g.rs + (nx * t[0] + ny * t[4] + nz * t[8]) / 16; g.t = g.rt + (nx * t[1] + ny * t[5] + nz * t[9]) / 16; }
         const col = [g.emi[0], g.emi[1], g.emi[2]];
         for (let i = 0; i < 4; i++) {
           if (!(g.attr & (1 << i))) continue;
@@ -3764,7 +3764,7 @@ function nds3dInstall(N) {
       }
       case 0x22: {
         g.rs = ((p[0] << 16) >> 16) / 16; g.rt = (p[0] >> 16) / 16;
-        if (((g.texParam >>> 30) & 3) === 1) { const t = g.tex; g.s = g.rs * t[0] + g.rt * t[4] + (t[8] + t[12]) * 16; g.t = g.rs * t[1] + g.rt * t[5] + (t[9] + t[13]) * 16; }
+        if (((g.texParam >>> 30) & 3) === 1) { const t = g.tex; g.s = g.rs * t[0] + g.rt * t[4] + (t[8] + t[12]) / 16; g.t = g.rs * t[1] + g.rt * t[5] + (t[9] + t[13]) / 16; }
         else { g.s = g.rs; g.t = g.rt; }
         return;
       }
@@ -3802,7 +3802,7 @@ function nds3dInstall(N) {
     if (g.prim < 0) return;
     this.gxClip(); const m = g.clip;
     let s = g.s, t = g.t;
-    if (((g.texParam >>> 30) & 3) === 3) { const tm = g.tex; s = g.rs + (x * tm[0] + y * tm[4] + z * tm[8]) * 16; t = g.rt + (x * tm[1] + y * tm[5] + z * tm[9]) * 16; }
+    if (((g.texParam >>> 30) & 3) === 3) { const tm = g.tex; s = g.rs + (x * tm[0] + y * tm[4] + z * tm[8]) / 16; t = g.rt + (x * tm[1] + y * tm[5] + z * tm[9]) / 16; }
     const v = { x: x * m[0] + y * m[4] + z * m[8] + m[12], y: x * m[1] + y * m[5] + z * m[9] + m[13], z: x * m[2] + y * m[6] + z * m[10] + m[14], w: x * m[3] + y * m[7] + z * m[11] + m[15], r: g.col[0], g: g.col[1], b: g.col[2], s, t };
     const vs = g.verts; vs.push(v); g.nverts++; this.d3.vtx++;
     switch (g.prim) {
@@ -3829,8 +3829,9 @@ function nds3dInstall(N) {
       }
       list = out;
     }
-    if (list.length < 3) { this.d3.clip++; if (!this.d3.out) this.d3.out = fmt(first); return; }
-    if (!this.d3.inn) this.d3.inn = fmt(first);
+    const mx = (m) => [m[0], m[5], m[10], m[11], m[12], m[13], m[14], m[15]].map((x) => x.toFixed(2)).join(' ');
+    if (list.length < 3) { this.d3.clip++; if (!this.d3.out) { this.d3.out = fmt(first); this.d3.outP = mx(g.proj); this.d3.outM = mx(g.pos) + ' sp ' + g.sp + ' modo ' + g.mode; } return; }
+    if (!this.d3.inn) { this.d3.inn = fmt(first); const h = (v, n) => (v >>> 0).toString(16).toUpperCase().padStart(n, '0'); this.d3.poly = `attr ${h(g.attr, 8)} tex ${h(g.texParam, 8)} pal ${h(g.texPal, 4)} cor ${[first.r, first.g, first.b].map((x) => Math.round(x)).join(',')} dif ${g.dif.join(',')} amb ${g.amb.join(',')} emi ${g.emi.join(',')}`; }
     const vp = g.vp, vw = (vp[2] - vp[0] + 1) * 0.5, vh = (vp[3] - vp[1] + 1) * 0.5, oy = 191 - vp[3];
     const vs = list.map(v => { const iw = 1 / (v.w || 1e-9); return { x: (v.x * iw + 1) * vw + vp[0], y: (1 - v.y * iw) * vh + oy, z: v.z * iw, iw, r: v.r * iw, g: v.g * iw, b: v.b * iw, s: v.s * iw, t: v.t * iw }; });
     let area = 0;

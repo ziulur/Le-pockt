@@ -143,6 +143,10 @@ section('DS 3D sombreamento', () => {
   g.w16(0, 0x04000060, 0); check('toon: cor vem da tabela (verde)', quad(2, 5), 0xff00ff00);
   g.w16(0, 0x04000060, 2); check('highlight: cinza da cor + tabela', quad(2, 5), (v) => ((v >> 8) & 0xFF) === 0xFF && (v & 0xFF) > 0x20 && (v & 0xFF) < 0x40);
   g.w16(0, 0x04000060, 0); check('modulação normal mantém a cor do vértice', quad(0, 0x7FFF), 0xffffffff);
+  // coordenada de textura vinda da matriz de textura (modo 1): translação de 8 texels = 128 em 1/16 de texel
+  W(0x04000440, 3); W(0x04000454, 0); W(0x04000470, 0); W(0x04000470, 0); W(0x04000470, 0); // MTX_TRANS zero
+  W(0x04000440, 3); W(0x04000454, 0); W(0x04000470, F(128)); W(0x04000470, 0); W(0x04000470, 0); W(0x04000440, 2);
+  W(0x040004A8, (1 << 30)); W(0x04000488, 0); check('texcoord pela matriz (modo 1) em texels', g.g.s, 8);
 });
 section('DS salvar estado', () => {
   const g = new NDS(fx('nds-test.nds')); for (let i = 0; i < 40; i++) g.runFrame();
