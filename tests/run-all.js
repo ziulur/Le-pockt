@@ -132,6 +132,18 @@ section('DS 3D e captura', () => {
   g.runFrame(); const before = g.out[100 * 256 + 128]; g.skipDraw = true; g.runFrame(); g.skipDraw = false;
   check('pular quadro mantém a imagem', g.out[100 * 256 + 128], before);
 });
+section('DS 3D sombreamento', () => {
+  const g = new NDS(fx('nds-test.nds')); for (let i = 0; i < 12; i++) g.runFrame();
+  const W = (a, v) => g.w32(0, a >>> 0, v | 0), F = (v) => Math.round(v * 4096) | 0;
+  W(0x04000000, 0x00010108); W(0x04000350, 0x001F0000); W(0x04000580, (191 << 24) | (255 << 16));
+  W(0x04000440, 0); W(0x04000454, 0); W(0x04000440, 2); W(0x04000454, 0);
+  for (let i = 0; i < 32; i++) g.w16(0, 0x04000380 + i * 2, i === 5 ? 0x03E0 : 0x001F); // tabela: índice 5 = verde
+  const vtx = (x, y) => { W(0x0400048C, (F(x) & 0xFFFF) | (F(y) << 16)); W(0x0400048C, 0); };
+  const quad = (mode, color) => { W(0x040004A4, (31 << 16) | 0xC0 | (mode << 4)); W(0x040004A8, 0); W(0x04000500, 1); W(0x04000480, color); vtx(-0.5, 0.5); vtx(-0.5, -0.5); vtx(0.5, -0.5); vtx(0.5, 0.5); W(0x04000504, 0); W(0x04000540, 0); g.runFrame(); g.runFrame(); return g.out[96 * 256 + 128] >>> 0; };
+  g.w16(0, 0x04000060, 0); check('toon: cor vem da tabela (verde)', quad(2, 5), 0xff00ff00);
+  g.w16(0, 0x04000060, 2); check('highlight: cinza da cor + tabela', quad(2, 5), (v) => ((v >> 8) & 0xFF) === 0xFF && (v & 0xFF) > 0x20 && (v & 0xFF) < 0x40);
+  g.w16(0, 0x04000060, 0); check('modulação normal mantém a cor do vértice', quad(0, 0x7FFF), 0xffffffff);
+});
 section('DS cartucho e save', () => {
   const g = new NDS(fx('nds-test.nds')); for (let i = 0; i < 15; i++) g.runFrame();
   const W = (a, v) => g.w32(0, a >>> 0, v | 0);
