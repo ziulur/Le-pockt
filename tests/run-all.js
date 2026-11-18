@@ -144,6 +144,18 @@ section('DS 3D sombreamento', () => {
   g.w16(0, 0x04000060, 2); check('highlight: cinza da cor + tabela', quad(2, 5), (v) => ((v >> 8) & 0xFF) === 0xFF && (v & 0xFF) > 0x20 && (v & 0xFF) < 0x40);
   g.w16(0, 0x04000060, 0); check('modulação normal mantém a cor do vértice', quad(0, 0x7FFF), 0xffffffff);
 });
+section('DS salvar estado', () => {
+  const g = new NDS(fx('nds-test.nds')); for (let i = 0; i < 40; i++) g.runFrame();
+  const st = g.saveState(); const ram = g.ram.b.slice(0, 0x100000), pc9 = g.cpu[0].r[15], pc7 = g.cpu[1].r[15], vc = g.dFrame;
+  g.touch(10, 10, true); for (let i = 0; i < 30; i++) g.runFrame(); g.ram.b[123] ^= 0xFF;
+  g.loadState(st);
+  check('estado restaura o ARM9', g.cpu[0].r[15], pc9); check('estado restaura o ARM7', g.cpu[1].r[15], pc7);
+  let same = true; for (let i = 0; i < ram.length; i++) if (g.ram.b[i] !== ram[i]) { same = false; break; } check('estado restaura a memória', same, true);
+  const h = new NDS(fx('nds-test.nds')); h.loadState(st);
+  for (let i = 0; i < 20; i++) { g.runFrame(); h.runFrame(); }
+  let eq = true; for (let i = 0; i < g.out.length; i++) if (g.out[i] !== h.out[i]) { eq = false; break; }
+  check('continuar do estado dá o mesmo resultado em outra cópia', eq && g.cpu[0].r[15] === h.cpu[0].r[15], true);
+});
 section('DS cartucho e save', () => {
   const g = new NDS(fx('nds-test.nds')); for (let i = 0; i < 15; i++) g.runFrame();
   const W = (a, v) => g.w32(0, a >>> 0, v | 0);
