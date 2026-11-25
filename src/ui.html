@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#16141c">
-<title>LE Pocket — Emulador GB/GBC/GBA/DS</title>
+<title>LE Pocket 3DS (em produção)</title>
 <!--PWAHEAD-->
 <style>
   :root {
@@ -139,7 +139,7 @@
     <canvas id="screen" width="160" height="144"></canvas>
     <div id="empty">
       <b>Coloque um jogo</b>
-      <div>Abra um arquivo <b style="font-size:14px">.gb</b>, <b style="font-size:14px">.gbc</b>, <b style="font-size:14px">.gba</b>, <b style="font-size:14px">.nds</b> ou <b style="font-size:14px">.zip</b> guardado no aparelho.</div>
+      <div>Abra um arquivo <b style="font-size:14px">.gb</b>, <b style="font-size:14px">.gbc</b>, <b style="font-size:14px">.gba</b>, <b style="font-size:14px">.nds</b>, <b style="font-size:14px">.3ds</b> ou <b style="font-size:14px">.zip</b> guardado no aparelho.</div>
       <button class="primary" id="btnOpenEmpty">Abrir jogo</button>
     </div>
   </div>
@@ -169,7 +169,7 @@
   <div class="sheetBody">
     <h3>Jogo</h3>
     <div class="grid">
-      <button class="wide" id="mOpen">📂 Abrir jogo<small>.gb · .gbc · .gba · .nds · .zip — o jogo fica salvo na biblioteca</small></button>
+      <button class="wide" id="mOpen">📂 Abrir jogo<small>.gb · .gbc · .gba · .nds · .3ds · .zip — o jogo fica salvo na biblioteca</small></button>
       <button id="mSaveState">💾 Salvar estado<small>Guarda o momento exato</small></button>
       <button id="mLoadState">⏪ Carregar estado<small>Volta ao momento salvo</small></button>
       <button id="mReset">🔄 Reiniciar</button>
@@ -418,13 +418,14 @@ async function startRom(u8, name, addToLib) {
     if (gb) persistSave(true);
     if (u8[0] === 0x37 && u8[1] === 0x7A && u8[2] === 0xBC && u8[3] === 0xAF) throw new Error('Arquivo .7z: extraia o jogo antes de abrir');
     if (u8[0] === 0x52 && u8[1] === 0x61 && u8[2] === 0x72 && u8[3] === 0x21) throw new Error('Arquivo .rar: extraia o jogo antes de abrir');
-    const isNds = /\.nds$/i.test(name) || (u8.length > 0x200 && u8[0x15C] === 0x56 && u8[0x15D] === 0xCF);
-    const isGba = !isNds && /\.(gba|agb)$/i.test(name) || (!/\.(gbc?|cgb)$/i.test(name) && u8.length >= 0xC0 && u8[0xB2] === 0x96 && u8[0x104] !== 0xCE);
-    if (!isNds && !isGba) { let x = 0; for (let i = 0x134; i <= 0x14C; i++) x = (x - u8[i] - 1) & 0xFF; if (x !== u8[0x14D]) throw new Error('Arquivo não reconhecido como jogo'); }
-    gb = isNds ? new NDS(u8) : isGba ? new GBA(u8) : new GB(u8, { sampleRate: actx ? actx.sampleRate : 44100, shades: PALETTES[palName] });
+    const tag = String.fromCharCode(u8[0x100], u8[0x101], u8[0x102], u8[0x103]), is3ds = /\.(3ds|cci|cxi)$/i.test(name) || tag === 'NCSD' || tag === 'NCCH';
+    const isNds = !is3ds && (/\.nds$/i.test(name) || (u8.length > 0x200 && u8[0x15C] === 0x56 && u8[0x15D] === 0xCF));
+    const isGba = !is3ds && (!isNds && /\.(gba|agb)$/i.test(name) || (!/\.(gbc?|cgb)$/i.test(name) && u8.length >= 0xC0 && u8[0xB2] === 0x96 && u8[0x104] !== 0xCE));
+    if (!is3ds && !isNds && !isGba) { let x = 0; for (let i = 0x134; i <= 0x14C; i++) x = (x - u8[i] - 1) & 0xFF; if (x !== u8[0x14D]) throw new Error('Arquivo não reconhecido como jogo'); }
+    gb = is3ds ? new N3DS(u8) : isNds ? new NDS(u8) : isGba ? new GBA(u8) : new GB(u8, { sampleRate: actx ? actx.sampleRate : 44100, shades: PALETTES[palName] });
     canvas.width = gb.width; canvas.height = gb.height; canvas.style.aspectRatio = gb.width + ' / ' + gb.height; canvas.style.setProperty('--ar', String(gb.width / gb.height));
     img = ctx2d.createImageData(gb.width, gb.height); img32 = new Uint32Array(img.data.buffer);
-    document.body.classList.toggle('gba', isGba || isNds); document.body.classList.toggle('nds', isNds);
+    document.body.classList.toggle('gba', isGba || isNds || is3ds); document.body.classList.toggle('nds', isNds || is3ds); document.body.classList.toggle('n3ds', is3ds);
     touchKeys = 0; keyKeys = 0; applied = 0; rsPos = 0;
     romId = gb.title.replace(/\W/g, '_') + '_' + hashRom(u8);
     const sav = store.get(savKey());
@@ -432,23 +433,34 @@ async function startRom(u8, name, addToLib) {
     else if (gb.hasSave) {
       const myGb = gb; cloudPull().then(c => { if (c && gb === myGb) { try { gb.loadSave(fromB64(c)); store.set(savKey(), c); gb.reset(); toast('Save recuperado da nuvem ✓'); } catch (e) {} } });
     }
-    $('gameTitle').textContent = name.replace(/\.(gbc?|cgb|gba|agb|nds|zip)$/i, '');
+    $('gameTitle').textContent = name.replace(/\.(gbc?|cgb|gba|agb|nds|3ds|cci|cxi|zip)$/i, '');
     $('empty').style.display = 'none';
     $('led').classList.add('on');
     paused = false; updatePause();
     audioClear();
     running = true;
-    const big = u8.length > BIG_ROM, meta = { id: romId, name: name.replace(/\.(gbc?|cgb|gba|agb|nds|zip)$/i, ''), size: u8.length, sys: gb.sys, played: Date.now() };
+    const big = u8.length > BIG_ROM, meta = { id: romId, name: name.replace(/\.(gbc?|cgb|gba|agb|nds|3ds|cci|cxi|zip)$/i, ''), size: u8.length, sys: gb.sys, played: Date.now() };
     if (addToLib && !big) { const whole = u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength; if (!(await libPut(meta, whole ? u8.buffer : u8.slice().buffer))) bigNote = 'Sem espaço para guardar este jogo na biblioteca'; }
     else if (!addToLib) libPut(meta);
     else bigNote = 'Jogo grande: não fica na biblioteca, abra o arquivo de novo da próxima vez';
     if (!big) store.set('lep:last', romId); else store.set('lep:last', '');
-    toast(({ gb: 'Game Boy', gbc: 'Game Boy Color', gba: 'Game Boy Advance', nds: 'Nintendo DS (etapa 1)' })[gb.sys] + ' · ' + gb.title);
+    toast(({ gb: 'Game Boy', gbc: 'Game Boy Color', gba: 'Game Boy Advance', nds: 'Nintendo DS', '3ds': 'Nintendo 3DS (fase inicial)' })[gb.sys] + ' · ' + gb.title);
     if (bigNote) setTimeout(() => toast(bigNote), 2200);
   } catch (e) { toast(e.message); }
 }
+async function open3ds(file) {
+  // jogos de 3DS têm GBs: lê só o cabeçalho e o ExeFS (o que a fase inicial usa)
+  const head = new Uint8Array(await file.slice(0, 0x4000).arrayBuffer()), dv = new DataView(head.buffer), tag = (o) => String.fromCharCode(...head.subarray(o + 0x100, o + 0x104));
+  let ncch = 0; if (tag(0) === 'NCSD') ncch = dv.getUint32(0x120, true) * 0x200; else if (tag(0) !== 'NCCH') throw new Error('Arquivo de 3DS não reconhecido (.3ds/.cci/.cxi)');
+  const h2 = new Uint8Array(await file.slice(ncch, ncch + 0x200).arrayBuffer()), d2 = new DataView(h2.buffer);
+  const end = Math.min(file.size, ncch + (d2.getUint32(0x1A0, true) + d2.getUint32(0x1A4, true)) * 0x200 + 0x400);
+  if (end > 96 * 1024 * 1024) throw new Error('Parte de código do jogo grande demais para esta fase');
+  return new Uint8Array(await file.slice(0, Math.max(end, 0x4000)).arrayBuffer());
+}
 async function openFile(file) {
-  let u8 = new Uint8Array(await file.arrayBuffer()); let name = file.name;
+  let name = file.name;
+  if (/\.(3ds|cci|cxi)$/i.test(name)) { try { startRom(await open3ds(file), name, true); } catch (e) { toast(e.message); } return; }
+  let u8 = new Uint8Array(await file.arrayBuffer());
   try {
     if (/\.zip$/i.test(name) || (u8[0] === 0x50 && u8[1] === 0x4B)) { const z = await unzip(u8); u8 = z.data; name = z.name.split('/').pop(); }
   } catch (e) { toast(e.message); return; }
@@ -595,7 +607,7 @@ let memState = null;
 $('mSaveState').onclick = async () => {
   if (!gb) return toast('Abra um jogo primeiro');
   const s = gb.saveState(); closeSheet();
-  if (!s) return toast('Salvar estado ainda não funciona no DS');
+  if (!s) return toast('Salvar estado ainda não funciona neste sistema');
   try { await statePut(romId, s); memState = null; toast('Estado salvo ✓'); } catch (e) { memState = { id: romId, s }; toast('Estado salvo só até fechar o app'); }
 };
 $('mLoadState').onclick = async () => {

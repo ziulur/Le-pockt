@@ -1,7 +1,7 @@
 name: Montar aplicativos
 on:
   push:
-    branches: [main]
+    branches: [main, 3ds]
   pull_request: {}
   workflow_dispatch: {}
 permissions:
@@ -112,3 +112,28 @@ jobs:
           gh release delete baixar --yes --cleanup-tag || true
           sleep 3
           gh release create baixar saida/* --target main --title "LE Pocket" --notes "Android: LE-Pocket.apk (debug, sem loja). iPhone: LE-Pocket.ipa sem assinatura (precisa de uma ferramenta de instalação que assine). Windows: LE-Pocket-Windows.zip. Navegador: LE-Pocket.html. Os jogos não vêm incluídos."
+  publicar-3ds:
+    needs: [web, android, ios]
+    # publica mesmo se a máquina Mac do GitHub não estiver disponível; nesse caso o .ipa anterior é mantido
+    if: always() && github.ref == 'refs/heads/3ds' && github.event_name == 'push' && needs.web.result == 'success' && needs.android.result == 'success' && needs.ios.result != 'failure'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: art
+      - name: Junta os arquivos
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir saida
+          cp art/android/LE-Pocket.apk art/web/LE-Pocket-Windows.zip saida/
+          if [ -f art/ios/LE-Pocket.ipa ]; then cp art/ios/LE-Pocket.ipa saida/; else gh release download baixar-3ds -p LE-Pocket.ipa -D saida || echo "sem .ipa anterior"; fi
+          cp art/web/web/LE-Pocket.html saida/LE-Pocket.html
+          ls -la saida
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete baixar-3ds --yes --cleanup-tag || true
+          sleep 3
+          gh release create baixar-3ds saida/* --target 3ds --prerelease --title "LE Pocket 3DS (em produção)" --notes "Android: LE-Pocket.apk (debug, sem loja). iPhone: LE-Pocket.ipa sem assinatura (precisa de uma ferramenta de instalação que assine). Windows: LE-Pocket-Windows.zip. Navegador: LE-Pocket.html. Os jogos não vêm incluídos."

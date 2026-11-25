@@ -16,7 +16,7 @@ import hashlib, json, os, shutil, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC, DIST = os.path.join(ROOT, 'src'), os.path.join(ROOT, 'dist')
-CORES = ['gbcore.js', 'gba.js', 'armcpu.js', 'nds.js', 'nds3d.js', 'ndssnd.js']  # a ordem importa
+CORES = ['gbcore.js', 'gba.js', 'armcpu.js', 'nds.js', 'nds3d.js', 'ndssnd.js', 'n3ds.js']  # a ordem importa
 ICONS = ['icon-180.png', 'icon-192.png', 'icon-512.png']
 REQUIRED = ['ui.html'] + ['cores/' + c for c in CORES] + ['assets/' + i for i in ICONS] + [
     'assets/LE-Pocket.ico', 'platform/windows/Instalar no Windows.bat', 'platform/windows/LEIA-ME.txt']
@@ -84,7 +84,7 @@ self.addEventListener('fetch', (e) => {
 });
 '''
 
-MANIFEST = {"name": "LE Pocket", "short_name": "LE Pocket", "description": "Emulador de Game Boy, Game Boy Color, Game Boy Advance e Nintendo DS",
+MANIFEST = {"name": "LE Pocket 3DS", "short_name": "LE Pocket 3DS", "description": "LE Pocket em produção: Game Boy até Nintendo 3DS",
             "lang": "pt-BR", "start_url": "./", "scope": "./", "display": "standalone", "orientation": "any",
             "background_color": "#16141c", "theme_color": "#16141c",
             "icons": [{"src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},

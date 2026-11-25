@@ -1,7 +1,7 @@
 {
- "name": "LE Pocket",
- "short_name": "LE Pocket",
- "description": "Emulador de Game Boy, Game Boy Color, Game Boy Advance e Nintendo DS",
+ "name": "LE Pocket 3DS",
+ "short_name": "LE Pocket 3DS",
+ "description": "LE Pocket em produção: Game Boy até Nintendo 3DS",
  "lang": "pt-BR",
  "start_url": "./",
  "scope": "./",

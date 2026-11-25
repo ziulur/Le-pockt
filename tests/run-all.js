@@ -3,7 +3,7 @@
 'use strict';
 const fs = require('fs'), path = require('path');
 const C = (f) => require(path.join(__dirname, '..', 'src', 'cores', f));
-const { GB } = C('gbcore.js'), { GBA } = C('gba.js'), { NDS } = C('nds.js');
+const { GB } = C('gbcore.js'), { GBA } = C('gba.js'), { NDS } = C('nds.js'), { N3DS } = C('n3ds.js');
 const fx = (n) => new Uint8Array(fs.readFileSync(path.join(__dirname, 'fixtures', n)));
 const hex = (v) => (v >>> 0).toString(16);
 let pass = 0, failN = 0, group = '';
@@ -172,6 +172,35 @@ section('DS 3D sombreamento', () => {
   W(0x04000440, 3); W(0x04000454, 0); W(0x04000470, 0); W(0x04000470, 0); W(0x04000470, 0); // MTX_TRANS zero
   W(0x04000440, 3); W(0x04000454, 0); W(0x04000470, F(128)); W(0x04000470, 0); W(0x04000470, 0); W(0x04000440, 2);
   W(0x040004A8, (1 << 30)); W(0x04000488, 0); check('texcoord pela matriz (modo 1) em texels', g.g.s, 8);
+});
+section('3DS fase inicial', () => {
+  // monta um cartucho .3ds de teste: NCSD -> NCCH (sem criptografia) -> ExHeader + ExeFS(.code compactado em BLZ)
+  const prog = [0xE3A0002A, 0xE6EF1070, 0xE6BF2F31, 0xEF00003D, 0xEF000003]; // mov r0,#42; uxtb r1,r0; rev r2,r1; svc 3D; svc 3
+  const prefix = new Uint8Array(64); prog.forEach((w, i) => { prefix[i * 4] = w & 255; prefix[i * 4 + 1] = (w >>> 8) & 255; prefix[i * 4 + 2] = (w >>> 16) & 255; prefix[i * 4 + 3] = w >>> 24; });
+  const rev = [0, 0, 0, 0, 0, 0, 0, 0, 0]; for (let k = 0; k < 2; k++) { rev.push(0xFF); for (let i = 0; i < 8; i++) rev.push(0xF0, 0x00); }
+  const region = rev.reverse(), n = 64 + region.length + 8, outLen = 64 + 8 + 2 * 8 * 18;
+  const code = new Uint8Array(n); code.set(prefix); code.set(region, 64); const cdv = new DataView(code.buffer);
+  cdv.setUint32(n - 8, ((8 << 24) | (n - 64)) >>> 0, true); cdv.setUint32(n - 4, outLen - n, true);
+  const dec = N3DS.blz(code); check('BLZ: tamanho descompactado', dec.length, outLen);
+  check('BLZ: código preservado e zeros expandidos', dec[0] === 0x2A && dec[63] === 0 && dec.slice(64).every((b) => b === 0), true);
+  const mk = (crypt) => {
+    const f = new Uint8Array(0x2000), dv = new DataView(f.buffer), str = (o, t) => { for (let i = 0; i < t.length; i++) f[o + i] = t.charCodeAt(i); };
+    str(0x100, 'NCSD'); dv.setUint32(0x120, 1, true); dv.setUint32(0x124, 0xF, true);
+    const N = 0x200; str(N + 0x100, 'NCCH'); str(N + 0x150, 'CTR-P-LETS'); dv.setUint32(N + 0x118, 0x00012345, true); dv.setUint32(N + 0x11C, 0x00040000, true);
+    f[N + 0x18B] = 2; f[N + 0x18F] = crypt ? 0 : 4; dv.setUint32(N + 0x180, 0x400, true); dv.setUint32(N + 0x1A0, 4, true); dv.setUint32(N + 0x1A4, 2, true);
+    const E = N + 0x200; str(E, 'LETEST'); f[E + 0xD] = 1; dv.setUint32(E + 0x10, 0x100000, true); dv.setUint32(E + 0x14, 1, true); dv.setUint32(E + 0x18, outLen, true);
+    dv.setUint32(E + 0x20, 0x101000, true); dv.setUint32(E + 0x30, 0x102000, true);
+    const X = N + 0x800; str(X, '.code'); dv.setUint32(X + 8, 0, true); dv.setUint32(X + 12, n, true); f.set(code, X + 0x200);
+    return f;
+  };
+  const g = new N3DS(mk(false));
+  check('3DS: formato reconhecido', g.info.kind, 'NCSD (.3ds/.cci)'); check('3DS: código do produto', g.info.code, 'CTR-P-LETS');
+  check('3DS: não criptografado', g.info.encrypted, false); check('3DS: tela 400x480', g.width * 1000 + g.height, 400480);
+  for (let i = 0; i < 3; i++) g.runFrame();
+  check('ARM11: UXTB', g.cpu.r[1], 42); check('ARM11: REV', g.cpu.r[2] >>> 0, 0x2A000000);
+  check('ARM11: chamadas ao sistema registradas', g.svcLog.join(','), '61,3'); check('ARM11: encerrou pelo ExitProcess', /ExitProcess/.test(g.stopped), true);
+  const e = new N3DS(mk(true)); check('3DS criptografado é identificado sem rodar', e.info.encrypted && !e.cpu, true);
+  check('3DS: diagnóstico', /3DS fase inicial/.test(g.diag()), true);
 });
 section('DS salvar estado', () => {
   const g = new NDS(fx('nds-test.nds')); for (let i = 0; i < 40; i++) g.runFrame();
