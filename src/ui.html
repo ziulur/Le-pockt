@@ -454,6 +454,7 @@ async function open3ds(file) {
   let ncch = 0; if (tag(0) === 'NCSD') ncch = dv.getUint32(0x120, true) * 0x200; else if (tag(0) !== 'NCCH') throw new Error('Arquivo de 3DS não reconhecido (.3ds/.cci/.cxi)');
   const h2 = new Uint8Array(await file.slice(ncch, ncch + 0x200).arrayBuffer()), d2 = new DataView(h2.buffer);
   const end = Math.min(file.size, ncch + (d2.getUint32(0x1A0, true) + d2.getUint32(0x1A4, true)) * 0x200 + 0x400);
+  if (file.size <= 200 * 1024 * 1024) return new Uint8Array(await file.arrayBuffer()); // cabe inteiro: inclui os arquivos internos (romfs)
   if (end > 96 * 1024 * 1024) throw new Error('Parte de código do jogo grande demais para esta fase');
   return new Uint8Array(await file.slice(0, Math.max(end, 0x4000)).arrayBuffer());
 }

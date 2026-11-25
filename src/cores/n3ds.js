@@ -86,13 +86,20 @@ class N3DS {
         if (name === 'icon') info.longName = this.smdh(start);
       }
     }
+    // romfs (arquivos internos do jogo): nível 3 do IVFC, quando essa parte do arquivo foi carregada
+    const rfo = this.u32(ncch + 0x1B0) * 0x200, rfs = this.u32(ncch + 0x1B4) * 0x200;
+    if (rfo && rfs) {
+      const iv = ncch + rfo;
+      if (iv + 0x60 <= r.length && this.str(iv, 4) === 'IVFC') { const mh = this.u32(iv + 8), bl = 1 << this.u32(iv + 0x4C), l3 = iv + ((0x60 + mh + bl - 1) & ~(bl - 1)); if (l3 < r.length) info.romfs = r.subarray(l3, Math.min(r.length, iv + rfs)); }
+      if (!info.romfs) info.problems.push('arquivos internos (romfs) ainda não carregados');
+    }
     if (!info.codeBin) info.problems.push('ExeFS sem .code');
     return info;
   }
   parse3dsx(info) { // homebrew: código + rodata + data com tabelas de relocação
     info.kind = 'Homebrew (.3dsx)'; info.homebrew = true;
     const hs = this.u16(4), rs = this.u16(6), code = this.u32(0x10), ro = this.u32(0x14), data = this.u32(0x18), bss = this.u32(0x1C);
-    if (hs > 0x20) { const so = this.u32(0x20), ss = this.u32(0x24); if (ss) info.longName = this.smdh(so); }
+    if (hs > 0x20) { const so = this.u32(0x20), ss = this.u32(0x24); if (ss) info.longName = this.smdh(so); const ro2 = this.u32(0x28); if (ro2 && ro2 < this.rom.length) info.romfs = this.rom.subarray(ro2); }
     info.x = { hs, rs, code, ro, data, bss };
     return info;
   }
@@ -361,10 +368,19 @@ class N3DS {
       if (id === 0x0003) { reply(3, 0); S(2, 0x12345678); S(3, 0); return; }
       ok(1); return;
     }
+    if (o.file) { // arquivo aberto (romfs)
+      const d = o.file;
+      if (id === 0x0802) { const off = (P(1) >>> 0) + (P(2) >>> 0) * 4294967296, size = P(3) >>> 0, buf = P(5) >>> 0, n = Math.max(0, Math.min(size, d.length - off)); for (let i = 0; i < n; i++) mem.w8(buf + i, d[off + i]); reply(2, 2); S(2, n); S(3, (size << 4) | 0xC); S(4, buf); return; }
+      if (id === 0x0804) { reply(3, 0); S(2, d.length); S(3, 0); return; }
+      ok(1); return;
+    }
     if (svc.startsWith('fs:')) {
+      if (id === 0x0803) { // OpenFileDirectly
+        if (P(2) === 3 && this.info.romfs) { reply(1, 2); S(2, 0x10); S(3, this.addHandle({ type: 'session', svc: 'file', file: this.info.romfs })); return; }
+        reply(1, 2); S(1, 0xC8804478 | 0); S(3, 0); return;
+      }
       if (id === 0x080C) { reply(3, 0); S(1, 0xC8804478 | 0); return; } // OpenArchive: sem cartão SD por enquanto
       if (id === 0x0801 || id === 0x0862 || id === 0x0868) { ok(1); return; }
-      if (id === 0x0803) { reply(1, 2); S(1, 0xC8804478 | 0); S(3, 0); return; } // OpenFileDirectly
       if (id === 0x0861) { reply(2, 0); S(2, 1); return; } // IsSdmcDetected
       reply(1, 0); S(1, 0xC8804478 | 0); return;
     }
@@ -565,6 +581,7 @@ class N3DS {
     if (I.name) line('EXHEADER: ' + I.name);
     line('CRIPTOGRAFADO: ' + (I.encrypted ? 'SIM' : 'NAO'), I.encrypted ? BAD : OK);
     if (I.codeSize) line('CODIGO CARREGADO: ' + (I.codeSize / 1024 | 0) + ' KB' + (I.compressed ? ' (DESCOMPACTADO)' : ''), OK);
+    if (I.romfs) line('ARQUIVOS INTERNOS (ROMFS): ' + (I.romfs.length / 1024 | 0) + ' KB', OK);
     for (const p of I.problems) line(p, BAD);
     if (this.unknownIpc && this.unknownIpc.size) line('SERVICOS SEM SUPORTE: ' + [...this.unknownIpc.keys()].join(' '));
     if (this.cmdLists) line('GPU 3D: ' + this.cmdLists + ' LISTAS, ' + (this.gpuStats ? this.gpuStats.tris : 0) + ' TRIANGULOS');
@@ -593,7 +610,7 @@ class N3DS {
       this.unknownIpc.size ? 'IPC sem suporte ' + [...this.unknownIpc].map(([k, v]) => k + ':' + v).join(' ') : '',
       'tela ' + (this.fbSeen ? 'sim' : 'não') + ' · listas GPU ' + this.cmdLists + (this.gpuStats ? ' · desenhos ' + this.gpuStats.draws + ' triângulos ' + this.gpuStats.tris + ' pixels ' + this.gpuStats.px + (this.gpuStats.unknownOp ? ' · op shader ' + this.gpuStats.unknownOp.toString(16) : '') : '') + (this.gpuErr ? ' · erro GPU ' + this.gpuErr : ''),
       this.debug.length ? 'debug ' + this.debug.slice(-3).join(' | ') : '',
-      this.stopped ? 'parou: ' + this.stopped : 'rodando'].concat(I.problems).filter(Boolean).join('\n');
+      this.stopped ? 'parou: ' + this.stopped : c ? 'rodando' : 'parado (não iniciou)'].concat(I.problems).filter(Boolean).join('\n');
   }
 }
 // memória virtual do aplicativo: 16 MB fixos no começo (código) + páginas de 1 MB criadas sob demanda

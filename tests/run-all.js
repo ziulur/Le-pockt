@@ -223,6 +223,16 @@ section('3DS fase inicial', () => {
     tr.gpuWrite(0x2BA, 0x100, 15); const inp = new Float32Array(64); inp.set([1, 1, 1, 1, 10, 20, 30, 40]);
     check('shader: MUL com uniforme + MAD', Array.from(tr.vsRun(inp).subarray(0, 4)).join(','), '12,23,34,45');
   }
+  { // iluminação: luz direcional branca vinda de +z
+    const R = tr.pr; R.fill(0, 0x140, 0x1E0); R[0x142] = (255 << 20) | (255 << 10) | 255; R[0x145] = 0x3C00; R[0x149] = 1; R[0x1C4] = 0x30000;
+    check('luz: normal virada para a luz fica clara', tr.gpuLight([0, 0, 0, 1], [0, 0, 1])[0].slice(0, 3).join(','), '1,1,1');
+    check('luz: normal de lado fica escura', tr.gpuLight([Math.SQRT1_2, 0, 0, Math.SQRT1_2], [0, 0, 1])[0][0] < 0.01, true);
+  }
+  { // arquivos internos (romfs) pelo fs:USER
+    const f = new N3DS(fx('3ds-fs.3dsx')); for (let i = 0; i < 3; i++) f.runFrame();
+    const st = (i) => f.mem.r32(f.info.data.addr + i * 4) >>> 0;
+    check('romfs: abre e mede o arquivo', st(1) + ':' + st(2), '0:64'); check('romfs: lê os dados certos', st(3) + ':' + st(4) + ':' + st(5), '16:40:171');
+  }
   check('PICA200: vértice vermelho aparece', [...Array(400).keys()].some((x) => red(pc(x, 120))), true);
  check('tela de baixo: cor com A e toque', h.out[300 * 400 + 200] >>> 0, 0xffc864ff);
 });

@@ -70,6 +70,10 @@ function n3dsGpuInstall(N3DS) {
       case 0x2D5: this.vsSwzIdx = v & 0x7F; break;
       case 0x2D6: case 0x2D7: case 0x2D8: case 0x2D9: case 0x2DA: case 0x2DB: case 0x2DC: case 0x2DD: this.vsSwz[this.vsSwzIdx++ & 127] = v; break;
       case 0x110: case 0x111: this.texCache.clear(); break;
+      case 0x1C5: this.lutSel = (v >>> 8) & 0x1F; this.lutIdx = v & 0xFF; break;
+      case 0x1C8: case 0x1C9: case 0x1CA: case 0x1CB: case 0x1CC: case 0x1CD: case 0x1CE: case 0x1CF:
+        if (!this.luts) this.luts = new Uint32Array(24 * 256);
+        this.luts[((this.lutSel || 0) % 24) * 256 + (this.lutIdx & 0xFF)] = v; this.lutIdx = (this.lutIdx + 1) & 0xFF; break;
     }
   };
   // ----- vértices -----
@@ -204,13 +208,14 @@ function n3dsGpuInstall(N3DS) {
   };
   // saídas do shader -> atributos do vértice (posição, cor, coordenadas de textura)
   P.vsSemantics = function (out) {
-    const R = this.pr, n = Math.min(7, R[0x4F] & 7), v = { pos: [0, 0, 0, 1], col: [1, 1, 1, 1], tc0: [0, 0], tc1: [0, 0], tc2: [0, 0] };
+    const R = this.pr, n = Math.min(7, R[0x4F] & 7), v = { pos: [0, 0, 0, 1], col: [1, 1, 1, 1], tc0: [0, 0], tc1: [0, 0], tc2: [0, 0], quat: [0, 0, 0, 1], view: [0, 0, 1] };
     for (let o = 0; o < n; o++) {
       const map = R[0x50 + o];
       for (let c = 0; c < 4; c++) {
         const sem = (map >>> (c * 8)) & 0x1F, val = out[o * 4 + c];
         if (sem < 4) v.pos[sem] = val; else if (sem >= 8 && sem < 12) v.col[sem - 8] = Math.max(0, Math.min(1, val));
         else if (sem === 12 || sem === 13) v.tc0[sem - 12] = val; else if (sem === 14 || sem === 15) v.tc1[sem - 14] = val; else if (sem === 22 || sem === 23) v.tc2[sem - 22] = val;
+        else if (sem >= 4 && sem < 8) v.quat[sem - 4] = val; else if (sem >= 0x12 && sem <= 0x14) v.view[sem - 0x12] = val;
       }
     }
     return v;
@@ -224,7 +229,7 @@ function n3dsGpuInstall(N3DS) {
   };
   // ----- recorte e rasterização -----
   const PLANES = [(p) => p[3] - 1e-5, (p) => p[3] - p[0], (p) => p[3] + p[0], (p) => p[3] - p[1], (p) => p[3] + p[1], (p) => -p[2], (p) => p[3] + p[2]];
-  const lerpV = (a, b, t) => ({ pos: a.pos.map((x, i) => x + (b.pos[i] - x) * t), col: a.col.map((x, i) => x + (b.col[i] - x) * t), tc0: a.tc0.map((x, i) => x + (b.tc0[i] - x) * t), tc1: a.tc1.map((x, i) => x + (b.tc1[i] - x) * t), tc2: a.tc2.map((x, i) => x + (b.tc2[i] - x) * t) });
+  const lerpV = (a, b, t) => ({ quat: a.quat.map((x, i) => x + (b.quat[i] - x) * t), view: a.view.map((x, i) => x + (b.view[i] - x) * t), pos: a.pos.map((x, i) => x + (b.pos[i] - x) * t), col: a.col.map((x, i) => x + (b.col[i] - x) * t), tc0: a.tc0.map((x, i) => x + (b.tc0[i] - x) * t), tc1: a.tc1.map((x, i) => x + (b.tc1[i] - x) * t), tc2: a.tc2.map((x, i) => x + (b.tc2[i] - x) * t) });
   P.gpuTri = function (a, b, c) {
     let poly = [a, b, c];
     for (const pl of PLANES) {
@@ -256,7 +261,7 @@ function n3dsGpuInstall(N3DS) {
     const at = R[0x104], aOn = at & 1, aFunc = (at >>> 4) & 7, aRef = (at >>> 8) & 0xFF;
     const blendOn = (R[0x100] >>> 8) & 1, bf = R[0x101], bc = R[0x103];
     const texOn = R[0x80] & 7, tex = [texOn & 1 ? this.gpuTex(0) : null, texOn & 2 ? this.gpuTex(1) : null, texOn & 4 ? this.gpuTex(2) : null];
-    const tc2src = (R[0x80] >>> 13) & 1;
+    const tc2src = (R[0x80] >>> 13) & 1, lightOn = R[0x8F] & 1;
     const cmpf = (f, a, b) => f === 0 ? false : f === 1 ? true : f === 2 ? a === b : f === 3 ? a !== b : f === 4 ? a < b : f === 5 ? a <= b : f === 6 ? a > b : a >= b;
     const dmax = T.dfmt === 0 ? 65535 : 16777215;
     const scBox = R[0x65] & 3 ? { x0: R[0x66] & 0x3FF, y0: (R[0x66] >>> 16) & 0x3FF, x1: R[0x67] & 0x3FF, y1: (R[0x67] >>> 16) & 0x3FF } : null;
@@ -276,7 +281,8 @@ function n3dsGpuInstall(N3DS) {
         const col = [I('col', 0), I('col', 1), I('col', 2), I('col', 3)];
         const tcs = [[I('tc0', 0), I('tc0', 1)], [I('tc1', 0), I('tc1', 1)], tc2src ? [I('tc1', 0), I('tc1', 1)] : [I('tc2', 0), I('tc2', 1)]];
         const texel = tex.map((t, i) => (t ? this.gpuSample(t, tcs[i][0], tcs[i][1]) : [0, 0, 0, 1]));
-        const frag = this.gpuTev(col, texel);
+        const lit = lightOn ? this.gpuLight([I('quat', 0), I('quat', 1), I('quat', 2), I('quat', 3)], [I('view', 0), I('view', 1), I('view', 2)]) : null;
+        const frag = this.gpuTev(col, texel, lit);
         if (aOn && !cmpf(aFunc, Math.round(frag[3] * 255), aRef)) continue;
         const ca = T.color + off * cbpp;
         let outc = frag;
@@ -356,11 +362,45 @@ function n3dsGpuInstall(N3DS) {
     }
     return out;
   };
+  // ----- iluminação por fragmento -----
+  const F16 = (v) => { v &= 0xFFFF; const s = v >> 15, e = (v >> 10) & 31, m = v & 1023; let f = e === 0 ? m / 1024 * Math.pow(2, -14) : (1 + m / 1024) * Math.pow(2, e - 15); return s ? -f : f; };
+  const C10 = (v) => [((v >>> 20) & 0xFF) / 255, ((v >>> 10) & 0xFF) / 255, (v & 0xFF) / 255];
+  const norm = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  P.gpuLut = function (lut, x, absOn) {
+    if (!this.luts) return 1;
+    let idx, frac;
+    if (absOn) { x = Math.min(1, Math.abs(x)); const f = x * 255; idx = Math.min(255, Math.floor(f)); frac = f - idx; }
+    else { x = Math.max(-1, Math.min(1, x)); const f = x * 127; idx = Math.floor(f) & 0xFF; frac = f - Math.floor(f); }
+    const e = this.luts[lut * 256 + idx], val = (e & 0xFFF) / 4096, delta = (((e >>> 12) & 0xFFF) << 20 >> 20) / 2048;
+    return val + delta * frac;
+  };
+  P.gpuLight = function (q, view) {
+    const R = this.pr, n = (R[0x1C2] & 7) + 1, cfg1 = R[0x1C4], absCfg = R[0x1D0], inSel = R[0x1D1], scaleCfg = R[0x1D2];
+    const ql = Math.hypot(q[0], q[1], q[2], q[3]) || 1, qq = q.map((x) => x / ql), qv = [qq[0], qq[1], qq[2]], z = [0, 0, 1];
+    const t = cross(qv, z).map((x, i) => x + qq[3] * z[i]), N = norm(cross(qv, t).map((x, i) => z[i] + 2 * x));
+    const V = norm(view), amb = C10(R[0x1C0]);
+    const prim = amb.slice(), sec = [0, 0, 0];
+    const scl = (k) => [1, 2, 4, 8, 1, 1, 0.25, 0.5][(scaleCfg >>> (k * 4)) & 7];
+    const lutIn = (k, L, H) => { const s = (inSel >>> (k * 4)) & 7; return s === 0 ? dot(N, H) : s === 1 ? dot(V, H) : s === 2 ? dot(N, V) : s === 3 ? dot(L, N) : 1; };
+    for (let i = 0; i < n; i++) {
+      const id = (R[0x1D9] >>> (i * 4)) & 7, b = 0x140 + id * 0x10;
+      const pos = [F16(R[b + 4]), F16(R[b + 4] >>> 16), F16(R[b + 5])], dir = (R[b + 9] & 1) !== 0;
+      const L = norm(dir ? pos : [pos[0] + view[0], pos[1] + view[1], pos[2] + view[2]]), H = norm([L[0] + V[0], L[1] + V[1], L[2] + V[2]]);
+      const dl = Math.max(0, dot(L, N)), la = C10(R[b + 3]), ld = C10(R[b + 2]), s0 = C10(R[b]), s1 = C10(R[b + 1]);
+      const d0 = cfg1 & 0x10000 ? 1 : this.gpuLut(0, lutIn(0, L, H), !(absCfg & 2)) * scl(0);
+      const d1 = cfg1 & 0x20000 ? 1 : this.gpuLut(1, lutIn(1, L, H), !(absCfg & 0x20)) * scl(1);
+      for (let c = 0; c < 3; c++) { prim[c] += la[c] + ld[c] * dl; sec[c] += (s0[c] * d0 + s1[c] * d1) * (dl > 0 ? 1 : 0); }
+    }
+    const cl = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+    return [[cl(prim[0]), cl(prim[1]), cl(prim[2]), 1], [cl(sec[0]), cl(sec[1]), cl(sec[2]), 1]];
+  };
   // ----- combinadores de textura (TEV) -----
-  P.gpuTev = function (prim, tex) {
+  P.gpuTev = function (prim, tex, lit) {
     const R = this.pr, base = [0xC0, 0xC8, 0xD0, 0xD8, 0xF0, 0xF8], bufCfg = R[0xE0];
     let prev = prim.slice(), buf = [(R[0xFD] & 0xFF) / 255, ((R[0xFD] >>> 8) & 0xFF) / 255, ((R[0xFD] >>> 16) & 0xFF) / 255, (R[0xFD] >>> 24) / 255];
-    const fragPrim = [1, 1, 1, 1], fragSec = [0, 0, 0, 1];
+    const fragPrim = lit ? lit[0] : [0, 0, 0, 0], fragSec = lit ? lit[1] : [0, 0, 0, 0];
     for (let st = 0; st < 6; st++) {
       const b = base[st], srcR = R[b], opR = R[b + 1], cmb = R[b + 2], k = R[b + 3], sc = R[b + 4];
       const konst = [(k & 0xFF) / 255, ((k >>> 8) & 0xFF) / 255, ((k >>> 16) & 0xFF) / 255, (k >>> 24) / 255];
