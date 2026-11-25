@@ -139,7 +139,7 @@
     <canvas id="screen" width="160" height="144"></canvas>
     <div id="empty">
       <b>Coloque um jogo</b>
-      <div>Abra um arquivo <b style="font-size:14px">.gb</b>, <b style="font-size:14px">.gbc</b>, <b style="font-size:14px">.gba</b>, <b style="font-size:14px">.nds</b>, <b style="font-size:14px">.3ds</b> ou <b style="font-size:14px">.zip</b> guardado no aparelho.</div>
+      <div>Abra um arquivo <b style="font-size:14px">.gb</b>, <b style="font-size:14px">.gbc</b>, <b style="font-size:14px">.gba</b>, <b style="font-size:14px">.nds</b>, <b style="font-size:14px">.3ds</b>, <b style="font-size:14px">.3dsx</b> ou <b style="font-size:14px">.zip</b> guardado no aparelho.</div>
       <button class="primary" id="btnOpenEmpty">Abrir jogo</button>
     </div>
   </div>
@@ -169,7 +169,7 @@
   <div class="sheetBody">
     <h3>Jogo</h3>
     <div class="grid">
-      <button class="wide" id="mOpen">📂 Abrir jogo<small>.gb · .gbc · .gba · .nds · .3ds · .zip — o jogo fica salvo na biblioteca</small></button>
+      <button class="wide" id="mOpen">📂 Abrir jogo<small>.gb · .gbc · .gba · .nds · .3ds · .3dsx · .zip — o jogo fica salvo na biblioteca</small></button>
       <button id="mSaveState">💾 Salvar estado<small>Guarda o momento exato</small></button>
       <button id="mLoadState">⏪ Carregar estado<small>Volta ao momento salvo</small></button>
       <button id="mReset">🔄 Reiniciar</button>
@@ -418,7 +418,7 @@ async function startRom(u8, name, addToLib) {
     if (gb) persistSave(true);
     if (u8[0] === 0x37 && u8[1] === 0x7A && u8[2] === 0xBC && u8[3] === 0xAF) throw new Error('Arquivo .7z: extraia o jogo antes de abrir');
     if (u8[0] === 0x52 && u8[1] === 0x61 && u8[2] === 0x72 && u8[3] === 0x21) throw new Error('Arquivo .rar: extraia o jogo antes de abrir');
-    const tag = String.fromCharCode(u8[0x100], u8[0x101], u8[0x102], u8[0x103]), is3ds = /\.(3ds|cci|cxi)$/i.test(name) || tag === 'NCSD' || tag === 'NCCH';
+    const tag = String.fromCharCode(u8[0x100], u8[0x101], u8[0x102], u8[0x103]), is3ds = /\.(3ds|cci|cxi|3dsx)$/i.test(name) || tag === 'NCSD' || tag === 'NCCH' || (u8[0] === 0x33 && u8[1] === 0x44 && u8[2] === 0x53 && u8[3] === 0x58);
     const isNds = !is3ds && (/\.nds$/i.test(name) || (u8.length > 0x200 && u8[0x15C] === 0x56 && u8[0x15D] === 0xCF));
     const isGba = !is3ds && (!isNds && /\.(gba|agb)$/i.test(name) || (!/\.(gbc?|cgb)$/i.test(name) && u8.length >= 0xC0 && u8[0xB2] === 0x96 && u8[0x104] !== 0xCE));
     if (!is3ds && !isNds && !isGba) { let x = 0; for (let i = 0x134; i <= 0x14C; i++) x = (x - u8[i] - 1) & 0xFF; if (x !== u8[0x14D]) throw new Error('Arquivo não reconhecido como jogo'); }
@@ -433,13 +433,13 @@ async function startRom(u8, name, addToLib) {
     else if (gb.hasSave) {
       const myGb = gb; cloudPull().then(c => { if (c && gb === myGb) { try { gb.loadSave(fromB64(c)); store.set(savKey(), c); gb.reset(); toast('Save recuperado da nuvem ✓'); } catch (e) {} } });
     }
-    $('gameTitle').textContent = name.replace(/\.(gbc?|cgb|gba|agb|nds|3ds|cci|cxi|zip)$/i, '');
+    $('gameTitle').textContent = name.replace(/\.(gbc?|cgb|gba|agb|nds|3dsx|3ds|cci|cxi|zip)$/i, '');
     $('empty').style.display = 'none';
     $('led').classList.add('on');
     paused = false; updatePause();
     audioClear();
     running = true;
-    const big = u8.length > BIG_ROM, meta = { id: romId, name: name.replace(/\.(gbc?|cgb|gba|agb|nds|3ds|cci|cxi|zip)$/i, ''), size: u8.length, sys: gb.sys, played: Date.now() };
+    const big = u8.length > BIG_ROM, meta = { id: romId, name: name.replace(/\.(gbc?|cgb|gba|agb|nds|3dsx|3ds|cci|cxi|zip)$/i, ''), size: u8.length, sys: gb.sys, played: Date.now() };
     if (addToLib && !big) { const whole = u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength; if (!(await libPut(meta, whole ? u8.buffer : u8.slice().buffer))) bigNote = 'Sem espaço para guardar este jogo na biblioteca'; }
     else if (!addToLib) libPut(meta);
     else bigNote = 'Jogo grande: não fica na biblioteca, abra o arquivo de novo da próxima vez';
@@ -555,13 +555,15 @@ window.addEventListener('mousemove', (e) => { if (mouseDown) { touchKeys = keysF
 window.addEventListener('mouseup', () => { if (mouseDown) { mouseDown = false; touchKeys = 0; applyKeys(); } });
 // tela de toque do DS (metade de baixo da imagem)
 function penAt(t, down) {
-  if (!gb || gb.sys !== 'nds') return;
+  if (!gb || (gb.sys !== 'nds' && gb.sys !== '3ds')) return;
   if (!down) { gb.touch(0, 0, false); return; }
-  const r = canvas.getBoundingClientRect(), sc = Math.min(r.width / 256, r.height / 384);
-  const x = (t.clientX - (r.left + (r.width - 256 * sc) / 2)) / sc, y = (t.clientY - (r.top + (r.height - 384 * sc) / 2)) / sc - 192;
-  if (y >= 0 && y < 192 && x >= 0 && x < 256) gb.touch(x, y, true);
+  const W = gb.width, H = gb.height, r = canvas.getBoundingClientRect(), sc = Math.min(r.width / W, r.height / H);
+  let x = (t.clientX - (r.left + (r.width - W * sc) / 2)) / sc, y = (t.clientY - (r.top + (r.height - H * sc) / 2)) / sc - H / 2;
+  if (gb.sys === '3ds') x -= 40; // tela de baixo do 3DS: 320 de largura, centralizada
+  const bw = gb.sys === '3ds' ? 320 : 256, bh = H / 2;
+  if (y >= 0 && y < bh && x >= 0 && x < bw) gb.touch(x, y, true);
 }
-['touchstart', 'touchmove'].forEach(ev => canvas.addEventListener(ev, (e) => { if (gb && gb.sys === 'nds') { e.preventDefault(); penAt(e.touches[0], true); } }, { passive: false }));
+['touchstart', 'touchmove'].forEach(ev => canvas.addEventListener(ev, (e) => { if (gb && (gb.sys === 'nds' || gb.sys === '3ds')) { e.preventDefault(); penAt(e.touches[0], true); } }, { passive: false }));
 ['touchend', 'touchcancel'].forEach(ev => canvas.addEventListener(ev, () => penAt(null, false)));
 let penMouse = false;
 canvas.addEventListener('mousedown', (e) => { penMouse = true; penAt(e, true); });

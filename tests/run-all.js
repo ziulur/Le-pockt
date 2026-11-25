@@ -200,7 +200,16 @@ section('3DS fase inicial', () => {
   check('ARM11: UXTB', g.cpu.r[1], 42); check('ARM11: REV', g.cpu.r[2] >>> 0, 0x2A000000);
   check('ARM11: chamadas ao sistema registradas', g.svcLog.join(','), '61,3'); check('ARM11: encerrou pelo ExitProcess', /ExitProcess/.test(g.stopped), true);
   const e = new N3DS(mk(true)); check('3DS criptografado é identificado sem rodar', e.info.encrypted && !e.cpu, true);
-  check('3DS: diagnóstico', /3DS fase inicial/.test(g.diag()), true);
+  check('3DS: diagnóstico', /3DS em produção/.test(g.diag()), true);
+  // homebrew de teste (tests/fixtures-src/3ds): srv, gsp, hid, memória linear, thread, VFP, telas e VBlank
+  const h = new N3DS(fx('3ds-hello.3dsx'));
+  for (let i = 0; i < 20; i++) { if (i === 10) { h.press(4, true); h.touch(100, 50, true); } h.runFrame(); }
+  const st = (i) => h.mem.r32(0x102000 + i * 4) >>> 0;
+  check('3dsx: serviços gsp::Gpu e hid:USER abertos', st(1), 1); check('3dsx: memória linear em 0x30000000', st(2), 0x30000000);
+  check('VFP: soma harmônica (float)', st(3), 2928); check('VFP: conta em double', st(4), 250);
+  check('3dsx: quadros com espera do VBlank', st(5) >= 15, true); check('thread extra rodou e acordou pela arbitragem', st(7), 15);
+  check('HID: botão A chega no jogo', st(6), 1);
+  check('tela de cima desenhada pelo jogo', h.out[0] >>> 0, 0xff400000); check('tela de baixo: cor com A e toque', h.out[300 * 400 + 200] >>> 0, 0xffc864ff);
 });
 section('DS salvar estado', () => {
   const g = new NDS(fx('nds-test.nds')); for (let i = 0; i < 40; i++) g.runFrame();

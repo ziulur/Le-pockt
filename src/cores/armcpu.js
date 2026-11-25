@@ -172,7 +172,7 @@ class Arm {
             if (op & 0x01000000) { // SWP
               const addr = r[(op >>> 16) & 15], rd = (op >>> 12) & 15, src = r[op & 15];
               if (op & 0x00400000) { const v = this.read8(addr); this.write8(addr, src & 0xFF); r[rd] = v; }
-              else { let v = this.read32(addr); const rot = (addr & 3) << 3; if (rot) v = (v >>> rot) | (v << (32 - rot)); this.write32(addr, src); r[rd] = v; }
+              else { let v = this.read32(addr); const rot = this.unal ? 0 : (addr & 3) << 3; if (rot) v = (v >>> rot) | (v << (32 - rot)); this.write32(addr, src); r[rd] = v; }
               this.cycles += 3; return;
             }
             const rs = r[(op >>> 8) & 15], rm = r[op & 15], S = op & 0x100000;
@@ -232,7 +232,7 @@ class Arm {
         if (op & 0x100000) {
           let v;
           if (op & 0x00400000) v = this.read8(addr);
-          else { v = this.read32(addr); const rot = (addr & 3) << 3; if (rot) v = (v >>> rot) | (v << (32 - rot)); }
+          else { v = this.read32(addr); const rot = this.unal ? 0 : (addr & 3) << 3; if (rot) v = (v >>> rot) | (v << (32 - rot)); }
           if (!P) r[rn] = addr + off; else if (op & 0x00200000) r[rn] = addr;
           r[rd] = v; if (rd === 15) this.flushL();
           this.cycles += 2;
@@ -350,7 +350,7 @@ class Arm {
           case 1: this.write16(addr, r[rd] & 0xFFFF); this.cycles += 1; return;
           case 2: this.write8(addr, r[rd] & 0xFF); this.cycles += 1; return;
           case 3: r[rd] = (this.read8(addr) << 24) >> 24; break;
-          case 4: { let v = this.read32(addr); const rot = (addr & 3) << 3; if (rot) v = (v >>> rot) | (v << (32 - rot)); r[rd] = v; break; }
+          case 4: { let v = this.read32(addr); const rot = this.unal ? 0 : (addr & 3) << 3; if (rot) v = (v >>> rot) | (v << (32 - rot)); r[rd] = v; break; }
           case 5: r[rd] = this.read16(addr); break;
           case 6: r[rd] = this.read8(addr); break;
           default: r[rd] = (this.read16(addr) << 16) >> 16; break;
@@ -359,7 +359,7 @@ class Arm {
       }
       case 6: {
         const addr = (r[(op >>> 3) & 7] + (((op >>> 6) & 31) << 2)) | 0, rd = op & 7;
-        if (op & 0x800) { let v = this.read32(addr); const rot = (addr & 3) << 3; if (rot) v = (v >>> rot) | (v << (32 - rot)); r[rd] = v; this.cycles += 2; }
+        if (op & 0x800) { let v = this.read32(addr); const rot = this.unal ? 0 : (addr & 3) << 3; if (rot) v = (v >>> rot) | (v << (32 - rot)); r[rd] = v; this.cycles += 2; }
         else { this.write32(addr, r[rd]); this.cycles += 1; }
         return;
       }
@@ -375,7 +375,7 @@ class Arm {
       }
       case 9: {
         const addr = (r[13] + ((op & 0xFF) << 2)) | 0, rd = (op >>> 8) & 7;
-        if (op & 0x800) { let v = this.read32(addr); const rot = (addr & 3) << 3; if (rot) v = (v >>> rot) | (v << (32 - rot)); r[rd] = v; this.cycles += 2; }
+        if (op & 0x800) { let v = this.read32(addr); const rot = this.unal ? 0 : (addr & 3) << 3; if (rot) v = (v >>> rot) | (v << (32 - rot)); r[rd] = v; this.cycles += 2; }
         else { this.write32(addr, r[rd]); this.cycles += 1; }
         return;
       }
