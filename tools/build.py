@@ -16,7 +16,7 @@ import hashlib, json, os, shutil, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC, DIST = os.path.join(ROOT, 'src'), os.path.join(ROOT, 'dist')
-CORES = ['gbcore.js', 'gba.js', 'armcpu.js', 'nds.js', 'nds3d.js', 'ndssnd.js', 'n3ds.js']  # a ordem importa
+CORES = ['gbcore.js', 'gba.js', 'armcpu.js', 'nds.js', 'nds3d.js', 'ndssnd.js', 'n3ds.js', 'n3dsgpu.js']  # a ordem importa
 ICONS = ['icon-180.png', 'icon-192.png', 'icon-512.png']
 REQUIRED = ['ui.html'] + ['cores/' + c for c in CORES] + ['assets/' + i for i in ICONS] + [
     'assets/LE-Pocket.ico', 'platform/windows/Instalar no Windows.bat', 'platform/windows/LEIA-ME.txt']

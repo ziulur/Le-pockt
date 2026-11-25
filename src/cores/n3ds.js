@@ -123,7 +123,7 @@ class N3DS {
     this.mem = new N3DSMem(); this.svcLog = []; this.svcCount = new Map(); this.stopped = ''; this.frame = 0; this.ticks = 0;
     this.services = new Map(); this.unknownSvc = new Set(); this.unknownIpc = new Map(); this.debug = [];
     this.handles = new Map(); this.nextHandle = 0x100; this.threads = []; this.cur = null; this.arb = []; this.linearNext = 0; this.fbSeen = false;
-    this.gspShared = null; this.hidShared = null; this.gspEvent = 0; this.gspThreadId = 0; this.fb = [null, null]; this.cmdLists = 0;
+    this.gspShared = null; this.pr = null; if (this.gpuInit) this.gpuInit(); this.hidShared = null; this.gspEvent = 0; this.gspThreadId = 0; this.fb = [null, null]; this.cmdLists = 0;
     this.cpu = null;
     try { if (this.info.homebrew) this.load3dsx(); else if (this.info.codeBin) this.loadCxi(); } catch (e) { this.info.problems.push('falha ao carregar: ' + e.message); }
     if (this.entry !== undefined) this.boot();
@@ -397,6 +397,7 @@ class N3DS {
     }
   }
   gpuReg(a, v) {
+    if (a >= 0x401000 && a < 0x401C00) { if (!this.pr) this.gpuInit(); this.gpuWrite((a - 0x401000) >> 2, v >>> 0, 15); return; }
     // registros do LCD: endereço do framebuffer e formato (0x400468.. topo, 0x400568.. baixo)
     const base = [0x400400, 0x400500];
     for (let s = 0; s < 2; s++) {
@@ -421,7 +422,7 @@ class N3DS {
       if (!total) break;
       const c = q + 0x20 + idx * 0x20, P = (i) => m.r32(c + i * 4) >>> 0, cmd = P(0) & 0xFF;
       if (cmd === 0) { const src = P(1), dst = P(2), size = P(3); for (let i = 0; i < size; i++) m.w8(this.v(dst) + i, m.r8(this.v(src) + i)); this.gspIrq(6); }
-      else if (cmd === 1) { this.cmdLists++; this.gspIrq(5); } // lista de comandos da GPU 3D: próxima etapa (PICA200)
+      else if (cmd === 1) { this.cmdLists++; try { this.gpuRunList(P(1), P(2)); } catch (e) { this.gpuErr = e.message; } this.gspIrq(5); } // lista de comandos da GPU 3D (PICA200)
       else if (cmd === 2) { for (let k = 0; k < 2; k++) { const st = P(1 + k * 3), val = P(2 + k * 3), end = P(3 + k * 3), ctl = k ? P(7) >>> 16 : P(7) & 0xFFFF; if (!st) continue; const w = (ctl >> 8) & 3; const bpp = w === 0 ? 2 : w === 1 || w === 3 ? 3 : 4; for (let a = this.v(st); a < this.v(end); a += bpp) { m.w8(a, val); m.w8(a + 1, val >>> 8); if (bpp > 2) m.w8(a + 2, val >>> 16); if (bpp > 3) m.w8(a + 3, val >>> 24); } this.gspIrq(k); } }
       else if (cmd === 3) { this.displayTransfer(P(1), P(2), P(3), P(4), P(5)); this.gspIrq(4); }
       else if (cmd === 4) { const src = this.v(P(1)), dst = this.v(P(2)), size = P(3); for (let i = 0; i < size; i++) m.w8(dst + i, m.r8(src + i)); this.gspIrq(4); }
@@ -439,11 +440,12 @@ class N3DS {
     const m = this.mem, iw = inDim & 0xFFFF, ih = inDim >>> 16, ow = outDim & 0xFFFF, oh = outDim >>> 16;
     const inF = (flags >> 8) & 7, outF = (flags >> 12) & 7, tiledIn = !(flags & 2) && !(flags & 8), flip = flags & 1;
     const bpp = (f) => [4, 3, 2, 2, 2][f] || 4, bi = bpp(inF), bo = bpp(outF), s = this.v(src), d = this.v(dst);
-    const W = Math.min(iw, ow), H = Math.min(ih, oh);
+    const sc = (flags >>> 24) & 3, sx = sc ? 2 : 1, sy = sc === 2 ? 2 : 1;
+    const W = Math.min(Math.floor(iw / sx), ow), H = Math.min(Math.floor(ih / sy), oh);
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      let si;
-      if (tiledIn) { const tx = x >> 3, ty = y >> 3, lx = x & 7, ly = y & 7; let mo = 0; for (let b = 0; b < 3; b++) mo |= (((lx >> b) & 1) << (2 * b)) | (((ly >> b) & 1) << (2 * b + 1)); si = ((ty * (iw >> 3) + tx) * 64 + mo) * bi; }
-      else si = (y * iw + x) * bi;
+      let si; const X = x * sx, Y = y * sy;
+      if (tiledIn) { const tx = X >> 3, ty = Y >> 3, lx = X & 7, ly = Y & 7; let mo = 0; for (let b = 0; b < 3; b++) mo |= (((lx >> b) & 1) << (2 * b)) | (((ly >> b) & 1) << (2 * b + 1)); si = ((ty * (iw >> 3) + tx) * 64 + mo) * bi; }
+      else si = (Y * iw + X) * bi;
       const rgba = this.readPx(s + si, inF), yy = flip ? H - 1 - y : y;
       this.writePx(d + (yy * ow + x) * bo, outF, rgba);
     }
@@ -565,7 +567,7 @@ class N3DS {
     if (I.codeSize) line('CODIGO CARREGADO: ' + (I.codeSize / 1024 | 0) + ' KB' + (I.compressed ? ' (DESCOMPACTADO)' : ''), OK);
     for (const p of I.problems) line(p, BAD);
     if (this.unknownIpc && this.unknownIpc.size) line('SERVICOS SEM SUPORTE: ' + [...this.unknownIpc.keys()].join(' '));
-    if (this.cmdLists) line('LISTAS DA GPU 3D: ' + this.cmdLists + ' (PICA200: PROXIMA ETAPA)');
+    if (this.cmdLists) line('GPU 3D: ' + this.cmdLists + ' LISTAS, ' + (this.gpuStats ? this.gpuStats.tris : 0) + ' TRIANGULOS');
     y = 250;
     text('PROCESSADOR ARM11', 48, y, W); y += 12;
     const L = (s, c) => { text(String(s).slice(0, 52), 48, y, c || G); y += 11; };
@@ -589,7 +591,7 @@ class N3DS {
       'SVC ' + this.svcLog.map((n) => n.toString(16)).join(' ') + (this.unknownSvc.size ? ' · sem suporte ' + [...this.unknownSvc].map((n) => n.toString(16)).join(' ') : ''),
       'serviços ' + [...new Set([...this.handles.values()].filter((o) => o.type === 'session').map((o) => o.svc))].join(' '),
       this.unknownIpc.size ? 'IPC sem suporte ' + [...this.unknownIpc].map(([k, v]) => k + ':' + v).join(' ') : '',
-      'tela ' + (this.fbSeen ? 'sim' : 'não') + ' · listas GPU ' + this.cmdLists,
+      'tela ' + (this.fbSeen ? 'sim' : 'não') + ' · listas GPU ' + this.cmdLists + (this.gpuStats ? ' · desenhos ' + this.gpuStats.draws + ' triângulos ' + this.gpuStats.tris + ' pixels ' + this.gpuStats.px + (this.gpuStats.unknownOp ? ' · op shader ' + this.gpuStats.unknownOp.toString(16) : '') : '') + (this.gpuErr ? ' · erro GPU ' + this.gpuErr : ''),
       this.debug.length ? 'debug ' + this.debug.slice(-3).join(' | ') : '',
       this.stopped ? 'parou: ' + this.stopped : 'rodando'].concat(I.problems).filter(Boolean).join('\n');
   }
@@ -790,4 +792,4 @@ class Arm11 extends ArmBase {
     super.thumb(op);
   }
 }
-if (typeof module !== 'undefined') module.exports = { N3DS, N3DSMem, Arm11 };
+if (typeof module !== 'undefined') { require('./n3dsgpu.js')(N3DS); module.exports = { N3DS, N3DSMem, Arm11 }; }

@@ -209,7 +209,22 @@ section('3DS fase inicial', () => {
   check('VFP: soma harmônica (float)', st(3), 2928); check('VFP: conta em double', st(4), 250);
   check('3dsx: quadros com espera do VBlank', st(5) >= 15, true); check('thread extra rodou e acordou pela arbitragem', st(7), 15);
   check('HID: botão A chega no jogo', st(6), 1);
-  check('tela de cima desenhada pelo jogo', h.out[0] >>> 0, 0xff400000); check('tela de baixo: cor com A e toque', h.out[300 * 400 + 200] >>> 0, 0xffc864ff);
+  check('tela de cima desenhada pelo jogo', h.out[0] >>> 0, 0xff400000);
+  // GPU PICA200: triângulo com lista de comandos, shader, rasterização e DisplayTransfer
+  const tr = new N3DS(fx('3ds-tri.3dsx')); for (let i = 0; i < 4; i++) tr.runFrame();
+  check('PICA200: lista de comandos executada', tr.gpuStats.lists, 1); check('PICA200: um triângulo desenhado', tr.gpuStats.tris, 1);
+  check('PICA200: fundo limpo pela cópia', tr.out[5 * 400 + 5] >>> 0, 0xff403020);
+  const pc = (x, y) => tr.out[y * 400 + x] >>> 0, red = (c) => (c & 255) > 150 && ((c >> 8) & 255) < 100;
+  check('PICA200: cores interpoladas (centro mistura as três)', pc(200, 120), (v) => (v & 255) > 40 && ((v >> 8) & 255) > 40 && ((v >> 16) & 255) > 40);
+  { // ISA do shader: MUL com uniforme + MAD
+    const f32 = (x) => { const b = new DataView(new ArrayBuffer(4)); b.setFloat32(0, x, true); return b.getUint32(0, true); };
+    tr.gpuWrite(0x2C0, 0x80000000, 15); [5, 4, 3, 2].forEach((x) => tr.gpuWrite(0x2C1, f32(x), 15));
+    tr.gpuWrite(0x2CB, 0x100, 15); [((0x08 << 26) | (0x10 << 21) | (0x20 << 12)) >>> 0, ((0x38 << 26) | (0x10 << 17) | (1 << 5)) >>> 0, 0x88000000].forEach((w) => tr.gpuWrite(0x2CC, w, 15));
+    tr.gpuWrite(0x2BA, 0x100, 15); const inp = new Float32Array(64); inp.set([1, 1, 1, 1, 10, 20, 30, 40]);
+    check('shader: MUL com uniforme + MAD', Array.from(tr.vsRun(inp).subarray(0, 4)).join(','), '12,23,34,45');
+  }
+  check('PICA200: vértice vermelho aparece', [...Array(400).keys()].some((x) => red(pc(x, 120))), true);
+ check('tela de baixo: cor com A e toque', h.out[300 * 400 + 200] >>> 0, 0xffc864ff);
 });
 section('DS salvar estado', () => {
   const g = new NDS(fx('nds-test.nds')); for (let i = 0; i < 40; i++) g.runFrame();
