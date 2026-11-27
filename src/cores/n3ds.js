@@ -458,6 +458,21 @@ class N3DS {
     const bpp = (f) => [4, 3, 2, 2, 2][f] || 4, bi = bpp(inF), bo = bpp(outF), s = this.v(src), d = this.v(dst);
     const sc = (flags >>> 24) & 3, sx = sc ? 2 : 1, sy = sc === 2 ? 2 : 1;
     const W = Math.min(Math.floor(iw / sx), ow), H = Math.min(Math.floor(ih / sy), oh);
+    // caminho rápido: memória contínua, RGBA8/BGR8 -> RGBA8/BGR8 (o caso de quase todo jogo)
+    const sv = m.view(s, iw * ih * bi), dv = m.view(d, ow * oh * bo);
+    if (sv && dv && (inF === 0 || inF === 1) && (outF === 0 || outF === 1)) {
+      const mo = new Uint8Array(64); for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) { let v = 0; for (let k = 0; k < 3; k++) v |= (((x >> k) & 1) << (2 * k)) | (((y >> k) & 1) << (2 * k + 1)); mo[y * 8 + x] = v; }
+      for (let y = 0; y < H; y++) {
+        const Y = y * sy, yy = flip ? H - 1 - y : y; let di = yy * ow * bo;
+        for (let x = 0; x < W; x++, di += bo) {
+          const X = x * sx, si = (tiledIn ? ((Y >> 3) * (iw >> 3) + (X >> 3)) * 64 + mo[((Y & 7) << 3) | (X & 7)] : Y * iw + X) * bi;
+          let r, g, b, al = 255;
+          if (inF === 0) { al = sv[si]; b = sv[si + 1]; g = sv[si + 2]; r = sv[si + 3]; } else { b = sv[si]; g = sv[si + 1]; r = sv[si + 2]; }
+          if (outF === 0) { dv[di] = al; dv[di + 1] = b; dv[di + 2] = g; dv[di + 3] = r; } else { dv[di] = b; dv[di + 1] = g; dv[di + 2] = r; }
+        }
+      }
+      return;
+    }
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       let si; const X = x * sx, Y = y * sy;
       if (tiledIn) { const tx = X >> 3, ty = Y >> 3, lx = X & 7, ly = Y & 7; let mo = 0; for (let b = 0; b < 3; b++) mo |= (((lx >> b) & 1) << (2 * b)) | (((ly >> b) & 1) << (2 * b + 1)); si = ((ty * (iw >> 3) + tx) * 64 + mo) * bi; }
@@ -543,7 +558,12 @@ class N3DS {
       const f = this.fb[s]; if (!f) continue;
       const W = s ? 320 : 400, ox = s ? 40 : 0, oy = s ? 240 : 0, bpp = [4, 3, 2, 2, 2][f.fmt] || 3, stride = f.stride || 240 * bpp;
       const src = f.addr ? f.addr : this.v(f.paddr || 0); if (!src) continue;
-      const fmt = f.fmt;
+      const fmt = f.fmt, fv = (fmt === 0 || fmt === 1) ? m.view(src, W * stride) : null;
+      if (fv) { // caminho rápido
+        for (let x = 0; x < W; x++) { let a = x * stride + 239 * bpp, oi = oy * N3DS_W + ox + x;
+          for (let y = 0; y < 240; y++, a -= bpp, oi += N3DS_W) o[oi] = fmt === 1 ? 0xFF000000 | (fv[a] << 16) | (fv[a + 1] << 8) | fv[a + 2] : 0xFF000000 | (fv[a + 1] << 16) | (fv[a + 2] << 8) | fv[a + 3]; }
+        continue;
+      }
       for (let x = 0; x < W; x++) {
         const col = src + x * stride; let a = col + 239 * bpp, oi = oy * N3DS_W + ox + x;
         for (let y = 0; y < 240; y++, a -= bpp, oi += N3DS_W) {
@@ -619,9 +639,22 @@ class N3DSMem {
     this.low = new ArrayBuffer(0x1000000); this.low8 = new Uint8Array(this.low); this.low16 = new Uint16Array(this.low); this.low32 = new Int32Array(this.low);
     this.pages = new Map(); this.lp = -1; this.lpg = null;
   }
+  // regiões contínuas (memória linear e VRAM): páginas são janelas de um bloco só, para a GPU ler e escrever direto
+  region(a) {
+    a >>>= 0;
+    const R = N3DSMem.REG; for (let i = 0; i < R.length; i++) { const r = R[i]; if (a >= r[0] && a < r[0] + r[1]) { if (!this.big) this.big = []; if (!this.big[i]) this.big[i] = new ArrayBuffer(r[1]); return { buf: this.big[i], base: r[0], size: r[1] }; } }
+    return null;
+  }
+  view(a, len) { const r = this.region(a); if (!r || (a >>> 0) + len > r.base + r.size) return null; return new Uint8Array(r.buf, (a >>> 0) - r.base, len); }
   pg(a) {
     const k = a >>> 20; if (k === this.lp) return this.lpg;
-    let p = this.pages.get(k); if (!p) { const b = new ArrayBuffer(0x100000); p = { b8: new Uint8Array(b), b16: new Uint16Array(b), b32: new Int32Array(b) }; this.pages.set(k, p); }
+    let p = this.pages.get(k);
+    if (!p) {
+      const r = this.region(a);
+      if (r) { const o = ((a >>> 0) & ~0xFFFFF) - r.base; p = { b8: new Uint8Array(r.buf, o, 0x100000), b16: new Uint16Array(r.buf, o, 0x80000), b32: new Int32Array(r.buf, o, 0x40000) }; }
+      else { const b = new ArrayBuffer(0x100000); p = { b8: new Uint8Array(b), b16: new Uint16Array(b), b32: new Int32Array(b) }; }
+      this.pages.set(k, p);
+    }
     this.lp = k; this.lpg = p; return p;
   }
   load(addr, data) { for (let i = 0; i < data.length; i++) this.w8(addr + i, data[i]); }
@@ -809,4 +842,5 @@ class Arm11 extends ArmBase {
     super.thumb(op);
   }
 }
+N3DSMem.REG = [[0x30000000, 0x04000000], [0x14000000, 0x04000000], [0x1F000000, 0x00600000]];
 if (typeof module !== 'undefined') { require('./n3dsgpu.js')(N3DS); module.exports = { N3DS, N3DSMem, Arm11 }; }

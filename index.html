@@ -4589,6 +4589,21 @@ class N3DS {
     const bpp = (f) => [4, 3, 2, 2, 2][f] || 4, bi = bpp(inF), bo = bpp(outF), s = this.v(src), d = this.v(dst);
     const sc = (flags >>> 24) & 3, sx = sc ? 2 : 1, sy = sc === 2 ? 2 : 1;
     const W = Math.min(Math.floor(iw / sx), ow), H = Math.min(Math.floor(ih / sy), oh);
+    // caminho rápido: memória contínua, RGBA8/BGR8 -> RGBA8/BGR8 (o caso de quase todo jogo)
+    const sv = m.view(s, iw * ih * bi), dv = m.view(d, ow * oh * bo);
+    if (sv && dv && (inF === 0 || inF === 1) && (outF === 0 || outF === 1)) {
+      const mo = new Uint8Array(64); for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) { let v = 0; for (let k = 0; k < 3; k++) v |= (((x >> k) & 1) << (2 * k)) | (((y >> k) & 1) << (2 * k + 1)); mo[y * 8 + x] = v; }
+      for (let y = 0; y < H; y++) {
+        const Y = y * sy, yy = flip ? H - 1 - y : y; let di = yy * ow * bo;
+        for (let x = 0; x < W; x++, di += bo) {
+          const X = x * sx, si = (tiledIn ? ((Y >> 3) * (iw >> 3) + (X >> 3)) * 64 + mo[((Y & 7) << 3) | (X & 7)] : Y * iw + X) * bi;
+          let r, g, b, al = 255;
+          if (inF === 0) { al = sv[si]; b = sv[si + 1]; g = sv[si + 2]; r = sv[si + 3]; } else { b = sv[si]; g = sv[si + 1]; r = sv[si + 2]; }
+          if (outF === 0) { dv[di] = al; dv[di + 1] = b; dv[di + 2] = g; dv[di + 3] = r; } else { dv[di] = b; dv[di + 1] = g; dv[di + 2] = r; }
+        }
+      }
+      return;
+    }
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       let si; const X = x * sx, Y = y * sy;
       if (tiledIn) { const tx = X >> 3, ty = Y >> 3, lx = X & 7, ly = Y & 7; let mo = 0; for (let b = 0; b < 3; b++) mo |= (((lx >> b) & 1) << (2 * b)) | (((ly >> b) & 1) << (2 * b + 1)); si = ((ty * (iw >> 3) + tx) * 64 + mo) * bi; }
@@ -4674,7 +4689,12 @@ class N3DS {
       const f = this.fb[s]; if (!f) continue;
       const W = s ? 320 : 400, ox = s ? 40 : 0, oy = s ? 240 : 0, bpp = [4, 3, 2, 2, 2][f.fmt] || 3, stride = f.stride || 240 * bpp;
       const src = f.addr ? f.addr : this.v(f.paddr || 0); if (!src) continue;
-      const fmt = f.fmt;
+      const fmt = f.fmt, fv = (fmt === 0 || fmt === 1) ? m.view(src, W * stride) : null;
+      if (fv) { // caminho rápido
+        for (let x = 0; x < W; x++) { let a = x * stride + 239 * bpp, oi = oy * N3DS_W + ox + x;
+          for (let y = 0; y < 240; y++, a -= bpp, oi += N3DS_W) o[oi] = fmt === 1 ? 0xFF000000 | (fv[a] << 16) | (fv[a + 1] << 8) | fv[a + 2] : 0xFF000000 | (fv[a + 1] << 16) | (fv[a + 2] << 8) | fv[a + 3]; }
+        continue;
+      }
       for (let x = 0; x < W; x++) {
         const col = src + x * stride; let a = col + 239 * bpp, oi = oy * N3DS_W + ox + x;
         for (let y = 0; y < 240; y++, a -= bpp, oi += N3DS_W) {
@@ -4750,9 +4770,22 @@ class N3DSMem {
     this.low = new ArrayBuffer(0x1000000); this.low8 = new Uint8Array(this.low); this.low16 = new Uint16Array(this.low); this.low32 = new Int32Array(this.low);
     this.pages = new Map(); this.lp = -1; this.lpg = null;
   }
+  // regiões contínuas (memória linear e VRAM): páginas são janelas de um bloco só, para a GPU ler e escrever direto
+  region(a) {
+    a >>>= 0;
+    const R = N3DSMem.REG; for (let i = 0; i < R.length; i++) { const r = R[i]; if (a >= r[0] && a < r[0] + r[1]) { if (!this.big) this.big = []; if (!this.big[i]) this.big[i] = new ArrayBuffer(r[1]); return { buf: this.big[i], base: r[0], size: r[1] }; } }
+    return null;
+  }
+  view(a, len) { const r = this.region(a); if (!r || (a >>> 0) + len > r.base + r.size) return null; return new Uint8Array(r.buf, (a >>> 0) - r.base, len); }
   pg(a) {
     const k = a >>> 20; if (k === this.lp) return this.lpg;
-    let p = this.pages.get(k); if (!p) { const b = new ArrayBuffer(0x100000); p = { b8: new Uint8Array(b), b16: new Uint16Array(b), b32: new Int32Array(b) }; this.pages.set(k, p); }
+    let p = this.pages.get(k);
+    if (!p) {
+      const r = this.region(a);
+      if (r) { const o = ((a >>> 0) & ~0xFFFFF) - r.base; p = { b8: new Uint8Array(r.buf, o, 0x100000), b16: new Uint16Array(r.buf, o, 0x80000), b32: new Int32Array(r.buf, o, 0x40000) }; }
+      else { const b = new ArrayBuffer(0x100000); p = { b8: new Uint8Array(b), b16: new Uint16Array(b), b32: new Int32Array(b) }; }
+      this.pages.set(k, p);
+    }
     this.lp = k; this.lpg = p; return p;
   }
   load(addr, data) { for (let i = 0; i < data.length; i++) this.w8(addr + i, data[i]); }
@@ -4940,6 +4973,7 @@ class Arm11 extends ArmBase {
     super.thumb(op);
   }
 }
+N3DSMem.REG = [[0x30000000, 0x04000000], [0x14000000, 0x04000000], [0x1F000000, 0x00600000]];
 if (typeof module !== 'undefined') { require('./n3dsgpu.js')(N3DS); module.exports = { N3DS, N3DSMem, Arm11 }; }
 
 // ===== 3DS: GPU PICA200 (parte 1) =====
@@ -4958,10 +4992,11 @@ function n3dsGpuInstall(N3DS) {
 
   P.gpuInit = function () {
     this.pr = new Uint32Array(0x300); // registros do PICA
-    this.vsCode = new Uint32Array(512); this.vsSwz = new Uint32Array(128); this.vsC = new Float32Array(96 * 4); this.vsB = 0; this.vsI = new Int32Array(16);
-    this.vsCodeIdx = 0; this.vsSwzIdx = 0; this.unifIdx = 0; this.unifBuf = []; this.unifF32 = false;
+    const unit = () => ({ code: new Uint32Array(512), swz: new Uint32Array(128), C: new Float32Array(96 * 4), B: 0, I: new Int32Array(16), codeIdx: 0, swzIdx: 0, unifIdx: 0, unifBuf: [], unifF32: false });
+    this.vs = unit(); this.gs = unit(); this.gsIn = []; this.gsStats = 0;
+    this.vsCode = this.vs.code; this.vsSwz = this.vs.swz; this.vsC = this.vs.C; this.vsI = this.vs.I; this.vsB = 0;
     this.fixed = new Float32Array(16 * 4); this.fixedIdx = 0; this.fixedBuf = []; this.immVerts = [];
-    this.gpuStats = { lists: 0, draws: 0, tris: 0, px: 0, unknownOp: 0 };
+    this.gpuStats = { lists: 0, draws: 0, tris: 0, px: 0, unknownOp: 0 }; this.gsIn = [];
     this.strip = []; this.texCache = new Map();
   };
   // ----- lista de comandos -----
@@ -4983,6 +5018,7 @@ function n3dsGpuInstall(N3DS) {
     const R = this.pr;
     if (mask !== 15) { let bm = 0; for (let i = 0; i < 4; i++) if (mask & (1 << i)) bm |= 0xFF << (i * 8); v = ((R[id] & ~bm) | (v & bm)) >>> 0; }
     R[id] = v;
+    if (id >= 0x280 && id < 0x2E0) { this.shReg(id >= 0x2B0 ? this.vs : this.gs, id >= 0x2B0 ? id - 0x2B0 : id - 0x280, v); if (id === 0x2B0) this.vsB = v & 0xFFFF; return; }
     switch (id) {
       case 0x22E: this.gpuDraw(false); break;
       case 0x22F: this.gpuDraw(true); break;
@@ -5000,24 +5036,30 @@ function n3dsGpuInstall(N3DS) {
         break;
       }
       case 0x25F: this.strip = []; break; // reinicia primitiva
-      case 0x2C0: this.unifIdx = v & 0xFF; this.unifF32 = (v >>> 31) !== 0; this.unifBuf = []; break;
-      case 0x2C1: case 0x2C2: case 0x2C3: case 0x2C4: case 0x2C5: case 0x2C6: case 0x2C7: case 0x2C8: {
-        this.unifBuf.push(v); const b = this.unifBuf;
-        if (this.unifF32 && b.length === 4) { const i = (this.unifIdx++ & 0x7F) * 4; if (i < 384) { this.vsC[i] = F32(b[3]); this.vsC[i + 1] = F32(b[2]); this.vsC[i + 2] = F32(b[1]); this.vsC[i + 3] = F32(b[0]); } this.unifBuf = []; }
-        else if (!this.unifF32 && b.length === 3) { const i = (this.unifIdx++ & 0x7F) * 4; if (i < 384) { this.vsC[i] = F24(b[2] & 0xFFFFFF); this.vsC[i + 1] = F24(((b[1] & 0xFFFF) << 8) | (b[2] >>> 24)); this.vsC[i + 2] = F24(((b[0] & 0xFF) << 16) | (b[1] >>> 16)); this.vsC[i + 3] = F24(b[0] >>> 8); } this.unifBuf = []; }
-        break;
-      }
-      case 0x2B0: this.vsB = v & 0xFFFF; break;
-      case 0x2B1: case 0x2B2: case 0x2B3: case 0x2B4: { const k = (id - 0x2B1) * 4; this.vsI[k] = v & 0xFF; this.vsI[k + 1] = (v >>> 8) & 0xFF; this.vsI[k + 2] = (v << 8) >> 24; break; }
-      case 0x2CB: this.vsCodeIdx = v & 0x1FF; break;
-      case 0x2CC: case 0x2CD: case 0x2CE: case 0x2CF: case 0x2D0: case 0x2D1: case 0x2D2: case 0x2D3: this.vsCode[this.vsCodeIdx++ & 511] = v; break;
-      case 0x2D5: this.vsSwzIdx = v & 0x7F; break;
-      case 0x2D6: case 0x2D7: case 0x2D8: case 0x2D9: case 0x2DA: case 0x2DB: case 0x2DC: case 0x2DD: this.vsSwz[this.vsSwzIdx++ & 127] = v; break;
       case 0x110: case 0x111: this.texCache.clear(); break;
+      case 0xE6: this.fogIdx = v & 0x7F; break;
+      case 0xE8: case 0xE9: case 0xEA: case 0xEB: case 0xEC: case 0xED: case 0xEE: case 0xEF: if (!this.fogLut) this.fogLut = new Uint32Array(128); this.fogLut[(this.fogIdx || 0) & 127] = v; this.fogIdx = ((this.fogIdx || 0) + 1) & 127; break;
       case 0x1C5: this.lutSel = (v >>> 8) & 0x1F; this.lutIdx = v & 0xFF; break;
       case 0x1C8: case 0x1C9: case 0x1CA: case 0x1CB: case 0x1CC: case 0x1CD: case 0x1CE: case 0x1CF:
         if (!this.luts) this.luts = new Uint32Array(24 * 256);
         this.luts[((this.lutSel || 0) % 24) * 256 + (this.lutIdx & 0xFF)] = v; this.lutIdx = (this.lutIdx + 1) & 0xFF; break;
+    }
+  };
+  P.shReg = function (U, o, v) { // registros de uma unidade de shader (o = deslocamento a partir de 0x280/0x2B0)
+    switch (o) {
+      case 0x00: U.B = v & 0xFFFF; break;
+      case 0x01: case 0x02: case 0x03: case 0x04: { const k = (o - 1) * 4; U.I[k] = v & 0xFF; U.I[k + 1] = (v >>> 8) & 0xFF; U.I[k + 2] = (v << 8) >> 24; break; }
+      case 0x10: U.unifIdx = v & 0xFF; U.unifF32 = (v >>> 31) !== 0; U.unifBuf = []; break;
+      case 0x11: case 0x12: case 0x13: case 0x14: case 0x15: case 0x16: case 0x17: case 0x18: {
+        U.unifBuf.push(v); const b = U.unifBuf, C = U.C;
+        if (U.unifF32 && b.length === 4) { const i = (U.unifIdx++ & 0x7F) * 4; if (i < 384) { C[i] = F32(b[3]); C[i + 1] = F32(b[2]); C[i + 2] = F32(b[1]); C[i + 3] = F32(b[0]); } U.unifBuf = []; }
+        else if (!U.unifF32 && b.length === 3) { const i = (U.unifIdx++ & 0x7F) * 4; if (i < 384) { C[i] = F24(b[2] & 0xFFFFFF); C[i + 1] = F24(((b[1] & 0xFFFF) << 8) | (b[2] >>> 24)); C[i + 2] = F24(((b[0] & 0xFF) << 16) | (b[1] >>> 16)); C[i + 3] = F24(b[0] >>> 8); } U.unifBuf = []; }
+        break;
+      }
+      case 0x1B: U.codeIdx = v & 0x1FF; break;
+      case 0x1C: case 0x1D: case 0x1E: case 0x1F: case 0x20: case 0x21: case 0x22: case 0x23: U.code[U.codeIdx++ & 511] = v; break;
+      case 0x25: U.swzIdx = v & 0x7F; break;
+      case 0x26: case 0x27: case 0x28: case 0x29: case 0x2A: case 0x2B: case 0x2C: case 0x2D: U.swz[U.swzIdx++ & 127] = v; break;
     }
   };
   // ----- vértices -----
@@ -5066,10 +5108,11 @@ function n3dsGpuInstall(N3DS) {
     }
   };
   // ----- shader de vértice -----
-  P.vsRun = function (inp) {
-    const code = this.vsCode, swz = this.vsSwz, C = this.vsC, R = this.pr;
+  P.vsRun = function (inp, U, emit) {
+    U = U || this.vs; const code = U.code, swz = U.swz, C = U.C, R = this.pr, B = U.B, IU = U.I, entryReg = U === this.vs ? 0x2BA : 0x28A;
+    let emV = 0, emPrim = 0, emWind = 0;
     const tmp = new Float32Array(64), out = new Float32Array(64), a0 = [0, 0]; let aL = 0, cx = false, cy = false;
-    const calls = []; let pc = R[0x2BA] & 0x1FF, steps = 0;
+    const calls = []; let pc = R[entryReg] & 0x1FF, steps = 0;
     const src = (reg, rel) => {
       if (reg < 0x10) return inp.subarray(reg * 4, reg * 4 + 4);
       if (reg < 0x20) return tmp.subarray((reg - 0x10) * 4, (reg - 0x10) * 4 + 4);
@@ -5109,16 +5152,18 @@ function n3dsGpuInstall(N3DS) {
           case 0x20: case 0x23: { if (op === 0x20 || cond(ins)) { while (calls.length && !calls[calls.length - 1].loop) calls.pop(); const c = calls.pop(); if (c) pc = c.ret; } continue; }
           case 0x24: calls.push({ end: dest + num, ret: pc }); pc = dest; continue;
           case 0x25: if (cond(ins)) { calls.push({ end: dest + num, ret: pc }); pc = dest; } continue;
-          case 0x26: if ((this.vsB >>> ((ins >>> 22) & 15)) & 1) { calls.push({ end: dest + num, ret: pc }); pc = dest; } continue;
+          case 0x26: if ((B >>> ((ins >>> 22) & 15)) & 1) { calls.push({ end: dest + num, ret: pc }); pc = dest; } continue;
           case 0x27: case 0x28: {
-            const ok = op === 0x27 ? ((this.vsB >>> ((ins >>> 22) & 15)) & 1) === 1 : cond(ins);
+            const ok = op === 0x27 ? ((B >>> ((ins >>> 22) & 15)) & 1) === 1 : cond(ins);
             if (ok) calls.push({ end: dest, ret: dest + num }); else if (num) { calls.push({ end: dest + num, ret: dest + num }); pc = dest; } else pc = dest;
             continue;
           }
-          case 0x29: { const k = ((ins >>> 22) & 3) * 4; aL = this.vsI[k + 1]; calls.push({ loop: true, start: pc, end: dest + 1, ret: dest + 1, left: this.vsI[k], inc: this.vsI[k + 2] }); continue; }
+          case 0x29: { const k = ((ins >>> 22) & 3) * 4; aL = IU[k + 1]; calls.push({ loop: true, start: pc, end: dest + 1, ret: dest + 1, left: IU[k], inc: IU[k + 2] }); continue; }
           case 0x2C: if (cond(ins)) pc = dest; continue;
-          case 0x2D: if ((((this.vsB >>> ((ins >>> 22) & 15)) & 1) === 1) !== ((num & 1) === 1)) pc = dest; continue;
-          default: continue; // EMIT/SETEMIT: shader de geometria (próxima parte)
+          case 0x2D: if ((((B >>> ((ins >>> 22) & 15)) & 1) === 1) !== ((num & 1) === 1)) pc = dest; continue;
+          case 0x2B: emV = (ins >>> 24) & 3; emPrim = (ins >>> 22) & 1; emWind = (ins >>> 23) & 1; continue; // SETEMIT
+          case 0x2A: if (emit) emit(emV, out.slice(), emPrim, emWind); continue; // EMIT
+          default: continue;
         }
       }
       // formato 1 / 1i
@@ -5165,7 +5210,19 @@ function n3dsGpuInstall(N3DS) {
     return v;
   };
   P.gpuVertex = function (out, already) {
-    const v = this.vsSemantics(already ? out : this.vsRun(out)), R = this.pr, mode = (R[0x25E] >>> 8) & 3, s = this.strip;
+    const R = this.pr;
+    if ((R[0x229] & 3) === 2) { // shader de geometria: as saídas do vértice viram entradas do GS
+      const o = already ? out : this.vsRun(out), mask = R[0x2BD] & 0xFFFF;
+      for (let i = 0; i < 16; i++) if (mask & (1 << i)) this.gsIn.push(o.subarray(i * 4, i * 4 + 4));
+      const need = (R[0x289] & 15) + 1;
+      while (this.gsIn.length >= need) {
+        const inp = new Float32Array(64); for (let i = 0; i < need; i++) inp.set(this.gsIn[i], i * 4); this.gsIn.splice(0, need);
+        const buf = []; this.gsStats++;
+        this.vsRun(inp, this.gs, (vid, o2, prim, wind) => { buf[vid] = this.vsSemantics(o2); if (prim && buf[0] && buf[1] && buf[2]) { if (wind) this.gpuTri(buf[2], buf[1], buf[0]); else this.gpuTri(buf[0], buf[1], buf[2]); } });
+      }
+      return;
+    }
+    const v = this.vsSemantics(already ? out : this.vsRun(out)), mode = (R[0x25E] >>> 8) & 3, s = this.strip;
     s.push(v);
     if (mode === 0 || mode === 3) { if (s.length === 3) { this.gpuTri(s[0], s[1], s[2]); s.length = 0; } }
     else if (mode === 1) { if (s.length === 3) { if (s.odd) this.gpuTri(s[1], s[0], s[2]); else this.gpuTri(s[0], s[1], s[2]); s.odd = !s.odd; s.shift(); } }
@@ -5192,56 +5249,96 @@ function n3dsGpuInstall(N3DS) {
   P.gpuRaster = function (A, B, Cv) {
     const R = this.pr, T = this.gpuTarget(); if (!T.w || !T.h || !T.color) return;
     const hw = F24(R[0x41]), hh = F24(R[0x43]), vx = R[0x68] & 0x3FF, vy = (R[0x68] >>> 16) & 0x3FF, zs = F24(R[0x4D]), zo = F24(R[0x4E]);
-    const proj = (v) => { const iw = 1 / v.pos[3]; return { x: (v.pos[0] * iw + 1) * hw + vx, y: (v.pos[1] * iw + 1) * hh + vy, z: v.pos[2] * iw * zs + zo, iw, v }; };
-    const p = [proj(A), proj(B), proj(Cv)];
-    let area = (p[1].x - p[0].x) * (p[2].y - p[0].y) - (p[1].y - p[0].y) * (p[2].x - p[0].x);
-    if (area === 0) return;
+    const V = [A, B, Cv], X = [0, 0, 0], Y = [0, 0, 0], Z = [0, 0, 0], IW = [0, 0, 0];
+    for (let i = 0; i < 3; i++) { const p = V[i].pos, iw = 1 / p[3]; X[i] = (p[0] * iw + 1) * hw + vx; Y[i] = (p[1] * iw + 1) * hh + vy; Z[i] = p[2] * iw * zs + zo; IW[i] = iw; }
+    const area = (X[1] - X[0]) * (Y[2] - Y[0]) - (Y[1] - Y[0]) * (X[2] - X[0]);
+    if (area === 0 || area !== area) return;
     const cull = R[0x40] & 3; if ((cull === 1 && area < 0) || (cull === 2 && area > 0)) return;
     this.gpuStats.tris++;
-    const x0 = Math.max(0, Math.floor(Math.min(p[0].x, p[1].x, p[2].x))), x1 = Math.min(T.w - 1, Math.ceil(Math.max(p[0].x, p[1].x, p[2].x)));
-    const y0 = Math.max(0, Math.floor(Math.min(p[0].y, p[1].y, p[2].y))), y1 = Math.min(T.h - 1, Math.ceil(Math.max(p[0].y, p[1].y, p[2].y)));
-    const inv = 1 / area, m = this.mem, cbpp = [4, 3, 2, 2, 2][T.cfmt] || 4, dbpp = [2, 2, 3, 4][T.dfmt];
-    const dmask = R[0x107], dtest = dmask & 1, dfunc = (dmask >>> 4) & 7, cmask = (dmask >>> 8) & 15, dwrite = (dmask >>> 12) & 1;
+    let x0 = Math.max(0, Math.floor(Math.min(X[0], X[1], X[2]))), x1 = Math.min(T.w - 1, Math.ceil(Math.max(X[0], X[1], X[2])));
+    let y0 = Math.max(0, Math.floor(Math.min(Y[0], Y[1], Y[2]))), y1 = Math.min(T.h - 1, Math.ceil(Math.max(Y[0], Y[1], Y[2])));
+    if (R[0x65] & 3) { x0 = Math.max(x0, R[0x66] & 0x3FF); y0 = Math.max(y0, (R[0x66] >>> 16) & 0x3FF); x1 = Math.min(x1, R[0x67] & 0x3FF); y1 = Math.min(y1, (R[0x67] >>> 16) & 0x3FF); }
+    if (x0 > x1 || y0 > y1) return;
+    const inv = 1 / area;
+    // funções de borda lineares: w = A*x + B*y + C
+    const A0 = (Y[1] - Y[2]) * inv, B0 = (X[2] - X[1]) * inv, C0 = (X[1] * Y[2] - Y[1] * X[2]) * inv;
+    const A1 = (Y[2] - Y[0]) * inv, B1 = (X[0] - X[2]) * inv, C1 = (X[2] * Y[0] - Y[2] * X[0]) * inv;
+    // atributos pré-multiplicados por 1/w (perspectiva)
+    const texOn = R[0x80] & 7, lightOn = R[0x8F] & 1, tc2src = (R[0x80] >>> 13) & 1;
+    const NV = 17, va = new Float64Array(NV * 3);
+    for (let i = 0; i < 3; i++) { const v = V[i], o = i * NV, iw = IW[i];
+      va[o] = v.col[0] * iw; va[o + 1] = v.col[1] * iw; va[o + 2] = v.col[2] * iw; va[o + 3] = v.col[3] * iw;
+      va[o + 4] = v.tc0[0] * iw; va[o + 5] = v.tc0[1] * iw; va[o + 6] = v.tc1[0] * iw; va[o + 7] = v.tc1[1] * iw;
+      const t2 = tc2src ? v.tc1 : v.tc2; va[o + 8] = t2[0] * iw; va[o + 9] = t2[1] * iw;
+      if (lightOn) { va[o + 10] = v.quat[0] * iw; va[o + 11] = v.quat[1] * iw; va[o + 12] = v.quat[2] * iw; va[o + 13] = v.quat[3] * iw; va[o + 14] = v.view[0] * iw; va[o + 15] = v.view[1] * iw; va[o + 16] = v.view[2] * iw; } }
+    const nv = lightOn ? 17 : 10, f = new Float64Array(17);
+    // memória do alvo
+    const cbpp = [4, 3, 2, 2, 2][T.cfmt] || 4, dbpp = [2, 2, 3, 4][T.dfmt], m = this.mem;
+    const cv = m.view(T.color, T.w * T.h * cbpp), dv = T.depth ? m.view(T.depth, T.w * T.h * dbpp) : null;
+    const rd8 = cv ? (a) => cv[a - T.color] : (a) => m.r8(a), wr8 = cv ? (a, v) => { cv[a - T.color] = v; } : (a, v) => m.w8(a, v);
+    const dr8 = dv ? (a) => dv[a - T.depth] : (a) => m.r8(a), dw8 = dv ? (a, v) => { dv[a - T.depth] = v; } : (a, v) => m.w8(a, v);
+    // estado de saída
+    const dm = R[0x107], dtest = dm & 1, dfunc = (dm >>> 4) & 7, cmask = (dm >>> 8) & 15, dwrite = (dm >>> 12) & 1;
     const at = R[0x104], aOn = at & 1, aFunc = (at >>> 4) & 7, aRef = (at >>> 8) & 0xFF;
-    const blendOn = (R[0x100] >>> 8) & 1, bf = R[0x101], bc = R[0x103];
-    const texOn = R[0x80] & 7, tex = [texOn & 1 ? this.gpuTex(0) : null, texOn & 2 ? this.gpuTex(1) : null, texOn & 4 ? this.gpuTex(2) : null];
-    const tc2src = (R[0x80] >>> 13) & 1, lightOn = R[0x8F] & 1;
-    const cmpf = (f, a, b) => f === 0 ? false : f === 1 ? true : f === 2 ? a === b : f === 3 ? a !== b : f === 4 ? a < b : f === 5 ? a <= b : f === 6 ? a > b : a >= b;
+    const st = R[0x105], sOn = (st & 1) && T.dfmt === 3, sFunc = (st >>> 4) & 7, sWm = (st >>> 8) & 0xFF, sRef = (st >>> 16) & 0xFF, sIm = (st >>> 24) & 0xFF, so = R[0x106], sFail = so & 7, sZf = (so >>> 4) & 7, sZp = (so >>> 8) & 7;
+    const blendOn = (R[0x100] >>> 8) & 1, bf = R[0x101], bc = R[0x103], cc = [(bc & 0xFF) / 255, ((bc >>> 8) & 0xFF) / 255, ((bc >>> 16) & 0xFF) / 255, (bc >>> 24) / 255];
+    const fogOn = (R[0xE0] & 7) === 5, fogFlip = (R[0xE0] >>> 16) & 1, fc = R[0xE1], fogC = [(fc & 0xFF) / 255, ((fc >>> 8) & 0xFF) / 255, ((fc >>> 16) & 0xFF) / 255];
+    const tex = [texOn & 1 ? this.gpuTex(0) : null, texOn & 2 ? this.gpuTex(1) : null, texOn & 4 ? this.gpuTex(2) : null];
     const dmax = T.dfmt === 0 ? 65535 : 16777215;
-    const scBox = R[0x65] & 3 ? { x0: R[0x66] & 0x3FF, y0: (R[0x66] >>> 16) & 0x3FF, x1: R[0x67] & 0x3FF, y1: (R[0x67] >>> 16) & 0x3FF } : null;
+    const cmpf = (fn, a, b) => fn === 0 ? false : fn === 1 ? true : fn === 2 ? a === b : fn === 3 ? a !== b : fn === 4 ? a < b : fn === 5 ? a <= b : fn === 6 ? a > b : a >= b;
+    const sop = (op, v) => { switch (op) { case 0: return v; case 1: return 0; case 2: return sRef; case 3: return v < 255 ? v + 1 : 255; case 4: return v > 0 ? v - 1 : 0; case 5: return ~v & 255; case 6: return (v + 1) & 255; default: return (v - 1) & 255; } };
+    const tev = this.gpuTevSetup(), col = new Float64Array(4), tx = [new Float64Array([0, 0, 0, 1]), new Float64Array([0, 0, 0, 1]), new Float64Array([0, 0, 0, 1])], dst = new Float64Array(4);
+    let px = 0;
     for (let y = y0; y <= y1; y++) {
-      for (let x = x0; x <= x1; x++) {
-        const px = x + 0.5, py = y + 0.5;
-        let w0 = ((p[1].x - px) * (p[2].y - py) - (p[1].y - py) * (p[2].x - px)) * inv, w1 = ((p[2].x - px) * (p[0].y - py) - (p[2].y - py) * (p[0].x - px)) * inv, w2 = 1 - w0 - w1;
+      const py = y + 0.5, fy = T.h - 1 - y;
+      let w0 = A0 * (x0 + 0.5) + B0 * py + C0, w1 = A1 * (x0 + 0.5) + B1 * py + C1;
+      for (let x = x0; x <= x1; x++, w0 += A0, w1 += A1) {
+        const w2 = 1 - w0 - w1;
         if (w0 < 0 || w1 < 0 || w2 < 0) continue;
-        if (scBox && (x < scBox.x0 || x > scBox.x1 || y < scBox.y0 || y > scBox.y1)) continue;
-        const fy = T.h - 1 - y, off = tiled(x, fy, T.w);
-        const z = w0 * p[0].z + w1 * p[1].z + w2 * p[2].z, zi = Math.max(0, Math.min(dmax, Math.round(z * dmax)));
+        const off = morton[((fy & 7) << 3) | (x & 7)] + (x >> 3) * 64 + (fy >> 3) * T.w * 8;
+        const z = w0 * Z[0] + w1 * Z[1] + w2 * Z[2], zi = z <= 0 ? 0 : z >= 1 ? dmax : Math.round(z * dmax);
         const da = T.depth + off * dbpp;
-        if (dtest && T.depth) { const old = dbpp === 2 ? m.r16(da) : (m.r8(da) | (m.r8(da + 1) << 8) | (m.r8(da + 2) << 16)); if (!cmpf(dfunc, zi, old)) continue; }
-        // interpolação em perspectiva
-        const q0 = w0 * p[0].iw, q1 = w1 * p[1].iw, q2 = w2 * p[2].iw, qs = 1 / (q0 + q1 + q2);
-        const I = (f, i) => (q0 * p[0].v[f][i] + q1 * p[1].v[f][i] + q2 * p[2].v[f][i]) * qs;
-        const col = [I('col', 0), I('col', 1), I('col', 2), I('col', 3)];
-        const tcs = [[I('tc0', 0), I('tc0', 1)], [I('tc1', 0), I('tc1', 1)], tc2src ? [I('tc1', 0), I('tc1', 1)] : [I('tc2', 0), I('tc2', 1)]];
-        const texel = tex.map((t, i) => (t ? this.gpuSample(t, tcs[i][0], tcs[i][1]) : [0, 0, 0, 1]));
-        const lit = lightOn ? this.gpuLight([I('quat', 0), I('quat', 1), I('quat', 2), I('quat', 3)], [I('view', 0), I('view', 1), I('view', 2)]) : null;
-        const frag = this.gpuTev(col, texel, lit);
-        if (aOn && !cmpf(aFunc, Math.round(frag[3] * 255), aRef)) continue;
-        const ca = T.color + off * cbpp;
-        let outc = frag;
-        if (blendOn) {
-          const dst = this.readPx(ca, T.cfmt).map((x) => x / 255), cc = [(bc & 0xFF) / 255, ((bc >>> 8) & 0xFF) / 255, ((bc >>> 16) & 0xFF) / 255, (bc >>> 24) / 255];
-          const fac = (f, i) => { switch (f) { case 0: return 0; case 1: return 1; case 2: return frag[i]; case 3: return 1 - frag[i]; case 4: return dst[i]; case 5: return 1 - dst[i]; case 6: return frag[3]; case 7: return 1 - frag[3]; case 8: return dst[3]; case 9: return 1 - dst[3]; case 10: return cc[i]; case 11: return 1 - cc[i]; case 12: return cc[3]; case 13: return 1 - cc[3]; default: return i === 3 ? 1 : Math.min(frag[3], 1 - dst[3]); } };
-          const eq = (e, s, d) => e === 0 ? s + d : e === 1 ? s - d : e === 2 ? d - s : e === 3 ? Math.min(s, d) : Math.max(s, d);
-          outc = [0, 1, 2, 3].map((i) => { const rgb = i < 3, sf = fac(rgb ? (bf >>> 16) & 15 : (bf >>> 24) & 15, i), df = fac(rgb ? (bf >>> 20) & 15 : (bf >>> 28) & 15, i); return Math.max(0, Math.min(1, eq(rgb ? bf & 7 : (bf >>> 8) & 7, frag[i] * sf, dst[i] * df))); });
+        let stv = 0;
+        if (sOn) stv = dr8(da + 3);
+        if (sOn && !cmpf(sFunc, sRef & sIm, stv & sIm)) { const nv2 = sop(sFail, stv); dw8(da + 3, (stv & ~sWm) | (nv2 & sWm)); continue; }
+        if (dtest && T.depth) {
+          const old = dbpp === 2 ? (dr8(da) | (dr8(da + 1) << 8)) : (dr8(da) | (dr8(da + 1) << 8) | (dr8(da + 2) << 16));
+          if (!cmpf(dfunc, zi, old)) { if (sOn) { const nv2 = sop(sZf, stv); dw8(da + 3, (stv & ~sWm) | (nv2 & sWm)); } continue; }
         }
-        if (cmask === 15) this.writePx(ca, T.cfmt, outc.map((x) => Math.round(x * 255)));
-        else if (cmask) { const old = this.readPx(ca, T.cfmt); this.writePx(ca, T.cfmt, outc.map((x, i) => (cmask & (1 << i) ? Math.round(x * 255) : old[i]))); }
-        if (dwrite && T.depth) { if (dbpp === 2) m.w16(da, zi); else { m.w8(da, zi); m.w8(da + 1, zi >>> 8); m.w8(da + 2, zi >>> 16); } }
-        this.gpuStats.px++;
+        // atributos com perspectiva
+        const q = 1 / (w0 * IW[0] + w1 * IW[1] + w2 * IW[2]);
+        for (let k = 0; k < nv; k++) f[k] = (w0 * va[k] + w1 * va[NV + k] + w2 * va[2 * NV + k]) * q;
+        col[0] = f[0]; col[1] = f[1]; col[2] = f[2]; col[3] = f[3];
+        for (let u = 0; u < 3; u++) if (tex[u]) this.gpuSampleInto(tex[u], f[4 + u * 2], f[5 + u * 2], tx[u]);
+        const lit = lightOn ? this.gpuLight([f[10], f[11], f[12], f[13]], [f[14], f[15], f[16]]) : null;
+        const fr = this.gpuTevRun(tev, col, tx, lit);
+        if (fogOn && this.fogLut) { const d = fogFlip ? 1 - z : z, fi = Math.max(0, Math.min(127.999, d * 128)), k = fi | 0, e = this.fogLut[k], val = ((e >>> 13) & 0x7FF) / 2048, dif = ((e & 0x1FFF) << 19 >> 19) / 2048, fac = Math.max(0, Math.min(1, val + dif * (fi - k))); for (let c = 0; c < 3; c++) fr[c] = fr[c] * fac + fogC[c] * (1 - fac); }
+        if (aOn && !cmpf(aFunc, Math.round(fr[3] * 255), aRef)) continue;
+        if (sOn) { const nv2 = sop(sZp, stv); dw8(da + 3, (stv & ~sWm) | (nv2 & sWm)); }
+        const ca = T.color + off * cbpp;
+        if (blendOn || cmask !== 15) {
+          if (T.cfmt === 0) { dst[3] = rd8(ca) / 255; dst[2] = rd8(ca + 1) / 255; dst[1] = rd8(ca + 2) / 255; dst[0] = rd8(ca + 3) / 255; }
+          else { const o = this.readPx(ca, T.cfmt); dst[0] = o[0] / 255; dst[1] = o[1] / 255; dst[2] = o[2] / 255; dst[3] = o[3] / 255; }
+        }
+        if (blendOn) {
+          const fac = (fn, i) => { switch (fn) { case 0: return 0; case 1: return 1; case 2: return fr[i]; case 3: return 1 - fr[i]; case 4: return dst[i]; case 5: return 1 - dst[i]; case 6: return fr[3]; case 7: return 1 - fr[3]; case 8: return dst[3]; case 9: return 1 - dst[3]; case 10: return cc[i]; case 11: return 1 - cc[i]; case 12: return cc[3]; case 13: return 1 - cc[3]; default: return i === 3 ? 1 : Math.min(fr[3], 1 - dst[3]); } };
+          for (let i = 0; i < 4; i++) {
+            const rgb = i < 3, s = fr[i] * fac(rgb ? (bf >>> 16) & 15 : (bf >>> 24) & 15, i), d = dst[i] * fac(rgb ? (bf >>> 20) & 15 : (bf >>> 28) & 15, i), e = rgb ? bf & 7 : (bf >>> 8) & 7;
+            const r = e === 0 ? s + d : e === 1 ? s - d : e === 2 ? d - s : e === 3 ? Math.min(fr[i], dst[i]) : Math.max(fr[i], dst[i]);
+            fr[i] = r < 0 ? 0 : r > 1 ? 1 : r;
+          }
+        }
+        if (cmask !== 15) for (let i = 0; i < 4; i++) if (!(cmask & (1 << i))) fr[i] = dst[i];
+        if (cmask) {
+          if (T.cfmt === 0) { wr8(ca, Math.round(fr[3] * 255)); wr8(ca + 1, Math.round(fr[2] * 255)); wr8(ca + 2, Math.round(fr[1] * 255)); wr8(ca + 3, Math.round(fr[0] * 255)); }
+          else if (T.cfmt === 1) { wr8(ca, Math.round(fr[2] * 255)); wr8(ca + 1, Math.round(fr[1] * 255)); wr8(ca + 2, Math.round(fr[0] * 255)); }
+          else this.writePx(ca, T.cfmt, [Math.round(fr[0] * 255), Math.round(fr[1] * 255), Math.round(fr[2] * 255), Math.round(fr[3] * 255)]);
+        }
+        if (dwrite && T.depth) { dw8(da, zi & 255); dw8(da + 1, (zi >>> 8) & 255); if (dbpp > 2) dw8(da + 2, (zi >>> 16) & 255); }
+        px++;
       }
     }
+    this.gpuStats.px += px;
   };
   // ----- texturas -----
   P.gpuTex = function (u) {
@@ -5305,6 +5402,54 @@ function n3dsGpuInstall(N3DS) {
       out[(h - 1 - y) * w + x] = pack(r, g, b, a);
     }
     return out;
+  };
+  // ----- combinadores (TEV), versão rápida: configuração decodificada uma vez por triângulo -----
+  P.gpuTevSetup = function () {
+    const R = this.pr, base = [0xC0, 0xC8, 0xD0, 0xD8, 0xF0, 0xF8], st = [];
+    for (let i = 0; i < 6; i++) {
+      const b = base[i], src = R[b], op = R[b + 1], cmb = R[b + 2], k = R[b + 3], sc = R[b + 4];
+      const pass = (src & 0xF) === 15 && ((src >>> 16) & 15) === 15 && (op & 0xF) === 0 && ((op >>> 12) & 7) === 0 && (cmb & 0xF000F) === 0 && (sc & 0x30003) === 0;
+      st.push({ pass, s: [src & 15, (src >>> 4) & 15, (src >>> 8) & 15, (src >>> 16) & 15, (src >>> 20) & 15, (src >>> 24) & 15], o: [op & 15, (op >>> 4) & 15, (op >>> 8) & 15, (op >>> 12) & 7, (op >>> 16) & 7, (op >>> 20) & 7],
+        cm: cmb & 15, am: (cmb >>> 16) & 15, rs: [1, 2, 4, 1][sc & 3], as: [1, 2, 4, 1][(sc >>> 16) & 3], k: [(k & 0xFF) / 255, ((k >>> 8) & 0xFF) / 255, ((k >>> 16) & 0xFF) / 255, (k >>> 24) / 255] });
+    }
+    const fb = R[0xFD];
+    return { st, cfg: R[0xE0], buf0: [(fb & 0xFF) / 255, ((fb >>> 8) & 0xFF) / 255, ((fb >>> 16) & 0xFF) / 255, (fb >>> 24) / 255], prev: new Float64Array(4), buf: new Float64Array(4), nb: new Float64Array(4), a: new Float64Array(9), aa: new Float64Array(3), out: new Float64Array(4), zero: [0, 0, 0, 0] };
+  };
+  P.gpuTevRun = function (t, prim, tex, lit) {
+    const prev = t.prev, buf = t.buf, a = t.a, aa = t.aa, out = t.out, fp = lit ? lit[0] : t.zero, fs = lit ? lit[1] : t.zero;
+    prev[0] = prim[0]; prev[1] = prim[1]; prev[2] = prim[2]; prev[3] = prim[3];
+    buf[0] = t.buf0[0]; buf[1] = t.buf0[1]; buf[2] = t.buf0[2]; buf[3] = t.buf0[3];
+    for (let i = 0; i < 6; i++) {
+      const S = t.st[i];
+      if (i >= 1 && i <= 4) { if (t.cfg & (0x100 << (i - 1))) { buf[0] = t.nb[0]; buf[1] = t.nb[1]; buf[2] = t.nb[2]; } if (t.cfg & (0x1000 << (i - 1))) buf[3] = t.nb[3]; }
+      if (S.pass) { t.nb[0] = prev[0]; t.nb[1] = prev[1]; t.nb[2] = prev[2]; t.nb[3] = prev[3]; continue; }
+      for (let j = 0; j < 3; j++) {
+        const sid = S.s[j], c = sid === 0 ? prim : sid === 1 ? fp : sid === 2 ? fs : sid === 3 ? tex[0] : sid === 4 ? tex[1] : sid === 5 || sid === 6 ? tex[2] : sid === 13 ? buf : sid === 14 ? S.k : prev;
+        let r, g, b; switch (S.o[j]) { case 1: r = 1 - c[0]; g = 1 - c[1]; b = 1 - c[2]; break; case 2: r = g = b = c[3]; break; case 3: r = g = b = 1 - c[3]; break; case 4: r = g = b = c[0]; break; case 5: r = g = b = 1 - c[0]; break; case 8: r = g = b = c[1]; break; case 9: r = g = b = 1 - c[1]; break; case 12: r = g = b = c[2]; break; case 13: r = g = b = 1 - c[2]; break; default: r = c[0]; g = c[1]; b = c[2]; }
+        a[j * 3] = r; a[j * 3 + 1] = g; a[j * 3 + 2] = b;
+        const sa = S.s[3 + j], ca = sa === 0 ? prim : sa === 1 ? fp : sa === 2 ? fs : sa === 3 ? tex[0] : sa === 4 ? tex[1] : sa === 5 || sa === 6 ? tex[2] : sa === 13 ? buf : sa === 14 ? S.k : prev, ao = S.o[3 + j];
+        aa[j] = ao === 0 ? ca[3] : ao === 1 ? 1 - ca[3] : ao === 2 ? ca[0] : ao === 3 ? 1 - ca[0] : ao === 4 ? ca[1] : ao === 5 ? 1 - ca[1] : ao === 6 ? ca[2] : 1 - ca[2];
+      }
+      const cm = S.cm;
+      for (let k = 0; k < 3; k++) {
+        const x = a[k], y = a[3 + k], z = a[6 + k];
+        let v; switch (cm) { case 1: v = x * y; break; case 2: v = x + y; break; case 3: v = x + y - 0.5; break; case 4: v = x * z + y * (1 - z); break; case 5: v = x - y; break; case 6: case 7: v = 4 * ((a[0] - 0.5) * (a[3] - 0.5) + (a[1] - 0.5) * (a[4] - 0.5) + (a[2] - 0.5) * (a[5] - 0.5)); break; case 8: v = x * y + z; break; case 9: v = (x + y) * z; break; default: v = x; }
+        v *= S.rs; out[k] = v < 0 ? 0 : v > 1 ? 1 : v;
+      }
+      let av; const x = aa[0], y = aa[1], z = aa[2];
+      if (cm === 7) av = out[0]; else switch (S.am) { case 1: av = x * y; break; case 2: av = x + y; break; case 3: av = x + y - 0.5; break; case 4: av = x * z + y * (1 - z); break; case 5: av = x - y; break; case 8: av = x * y + z; break; case 9: av = (x + y) * z; break; default: av = x; }
+      av *= S.as; out[3] = av < 0 ? 0 : av > 1 ? 1 : av;
+      t.nb[0] = out[0]; t.nb[1] = out[1]; t.nb[2] = out[2]; t.nb[3] = out[3];
+      prev[0] = out[0]; prev[1] = out[1]; prev[2] = out[2]; prev[3] = out[3];
+    }
+    return prev;
+  };
+  P.gpuSampleInto = function (t, s, tt, o) {
+    let x = Math.floor(s * t.w), y = Math.floor((1 - tt) * t.h);
+    const wrap = (v, n, mode) => { if (mode === 2 || mode === 3) { const k = Math.floor(v / n); v -= k * n; return mode === 3 && (k & 1) ? n - 1 - v : v; } if (mode === 1) return v < 0 || v >= n ? -1 : v; return v < 0 ? 0 : v >= n ? n - 1 : v; };
+    if (x < 0 || x >= t.w || t.ws) x = wrap(x, t.w, t.ws); if (y < 0 || y >= t.h || t.wt) y = wrap(y, t.h, t.wt);
+    const c = x < 0 || y < 0 ? t.border : t.px[y * t.w + x];
+    o[0] = (c & 0xFF) / 255; o[1] = ((c >>> 8) & 0xFF) / 255; o[2] = ((c >>> 16) & 0xFF) / 255; o[3] = (c >>> 24) / 255;
   };
   // ----- iluminação por fragmento -----
   const F16 = (v) => { v &= 0xFFFF; const s = v >> 15, e = (v >> 10) & 31, m = v & 1023; let f = e === 0 ? m / 1024 * Math.pow(2, -14) : (1 + m / 1024) * Math.pow(2, e - 15); return s ? -f : f; };

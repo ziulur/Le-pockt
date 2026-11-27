@@ -233,6 +233,29 @@ section('3DS fase inicial', () => {
     const st = (i) => f.mem.r32(f.info.data.addr + i * 4) >>> 0;
     check('romfs: abre e mede o arquivo', st(1) + ':' + st(2), '0:64'); check('romfs: lê os dados certos', st(3) + ':' + st(4) + ':' + st(5), '16:40:171');
   }
+  { // estêncil, névoa e shader de geometria (registros direto na GPU)
+    const W = (r, v) => tr.gpuWrite(r, v >>> 0, 15), Vt = (x, y, c) => ({ pos: [x, y, -0.5, 1], col: c, tc0: [0, 0], tc1: [0, 0], tc2: [0, 0], quat: [0, 0, 0, 1], view: [0, 0, 1] });
+    const T = tr.gpuTarget();
+    W(0x8F, 0); W(0x107, 0x0F00); W(0x104, 0); W(0x100, 0); W(0xE0, 0);
+    W(0x105, 1 | (1 << 4) | (0xFF << 8) | (5 << 16) | (0xFF << 24)); W(0x106, 2 << 8); // sempre passa, escreve 5
+    tr.gpuTri(Vt(-0.3, -0.3, [1, 1, 1, 1]), Vt(0.3, -0.3, [1, 1, 1, 1]), Vt(0, 0.3, [1, 1, 1, 1]));
+    const st0 = tr.mem.r8(T.depth + (((200 >> 3) * T.w * 8) + (120 >> 3) * 64 + 0) * 4 + 3);
+    W(0x105, 1 | (2 << 4) | (0 << 16) | (0xFF << 24)); W(0x106, 0); // só passa onde o estêncil é 0
+    const before = tr.gpuStats.px; tr.gpuTri(Vt(-0.3, -0.3, [1, 0, 0, 1]), Vt(0.3, -0.3, [1, 0, 0, 1]), Vt(0, 0.3, [1, 0, 0, 1]));
+    check('estêncil: escreve a referência', st0, 5); check('estêncil: bloqueia onde já foi marcado', tr.gpuStats.px - before, 0);
+    W(0x105, 0);
+    W(0xE0, 5); W(0xE1, 0x00FF00); W(0xE6, 0); for (let i = 0; i < 128; i++) W(0xE8, 0); // névoa total verde
+    tr.gpuTri(Vt(-0.3, -0.3, [1, 0, 0, 1]), Vt(0.3, -0.3, [1, 0, 0, 1]), Vt(0, 0.3, [1, 0, 0, 1]));
+    const c = tr.readPx(T.color + (((T.h - 1 - 200) >> 3) * T.w * 8 + (120 >> 3) * 64) * 4, 0);
+    check('névoa: pinta com a cor da névoa', c.slice(0, 3).join(','), '0,255,0'); W(0xE0, 0);
+    // shader de geometria: um ponto vira um triângulo
+    const f32 = (x) => { const b = new DataView(new ArrayBuffer(4)); b.setFloat32(0, x, true); return b.getUint32(0, true); };
+    W(0x290, 0x80000000); [0, 0, 0, 0.5].forEach((x) => W(0x291, f32(x))); [0, 0, 0.5, 0].forEach((x) => W(0x291, f32(x)));
+    W(0x29B, 0); [(0x2B << 26), 0x4C000000, 0x4C201000, (0x2A << 26), (0x2B << 26) | (1 << 24), 0x00020000, (0x2A << 26), (0x2B << 26) | (2 << 24) | (1 << 22), 0x00021000, (0x2A << 26), 0x88000000].forEach((w) => W(0x29C, w));
+    W(0x2A5, 0); W(0x2A6, 0x0D86C36F); W(0x28A, 0); W(0x289, 1); W(0x2BD, 3); W(0x229, 2); W(0x2BA, 0);
+    const tris = tr.gpuStats.tris; const inp = new Float32Array(64); inp.set([0, 0, -0.5, 1, 0, 0, 1, 1]); tr.gpuVertex(inp);
+    check('shader de geometria: um ponto vira um triângulo', tr.gsStats + ':' + (tr.gpuStats.tris - tris), '1:1'); W(0x229, 0);
+  }
   check('PICA200: vértice vermelho aparece', [...Array(400).keys()].some((x) => red(pc(x, 120))), true);
  check('tela de baixo: cor com A e toque', h.out[300 * 400 + 200] >>> 0, 0xffc864ff);
 });
